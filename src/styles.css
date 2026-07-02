@@ -738,3 +738,7 @@ body.drag-audio::after {
 .bfolder-head.drop { background: color-mix(in srgb, var(--accent) 18%, var(--bg2)); outline: 1px dashed var(--accent); outline-offset: -1px; }
 .bfolder-body { margin-left: 8px; border-left: 1px solid var(--border); padding-left: 4px; }
 .bsample-rename { width: 100%; margin: 2px 0; }
+
+/* disabled knob (e.g. Decay on a sampled drum pad) */
+.knob.disabled { opacity: 0.32; }
+.knob.disabled svg { cursor: default; }

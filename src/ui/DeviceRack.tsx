@@ -276,6 +276,9 @@ function InstrumentPanel({ trackId, track }: { trackId: string; track: Y.Map<any
           <div className="knob-row">
             {['tune', 'decay', 'level'].map(suffix => {
               const spec = schema.params.find(p => p.key === `p${pad}_${suffix}`)!
+              // sampled pad: Tune repitches the sample, Level scales it, but the
+              // whole sample always plays — Decay does nothing, so grey it out.
+              const padIsSampled = !!padSamples?.get(String(pad))
               return (
                 <Knob
                   key={spec.key}
@@ -283,6 +286,8 @@ function InstrumentPanel({ trackId, track }: { trackId: string; track: Y.Map<any
                   value={params.get(spec.key) ?? spec.def}
                   onChange={v => setInstParam(trackId, spec.key, v)}
                   size={40}
+                  disabled={padIsSampled && suffix === 'decay'}
+                  disabledInfo="Decay has no effect on a sampled pad — the whole sample plays (Tune repitches it, Level sets its volume)"
                 />
               )
             })}

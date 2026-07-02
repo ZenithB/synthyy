@@ -66,18 +66,20 @@ function fromNorm(n: number, s: ParamSpec) {
   return clamp(v, s.min, s.max)
 }
 
-export function Knob({ spec, value, onChange, size = 36, accent }: {
+export function Knob({ spec, value, onChange, size = 36, accent, disabled = false, disabledInfo }: {
   spec: ParamSpec
   value: number
   onChange: (v: number) => void
   size?: number
   accent?: string
+  disabled?: boolean        // greyed + inert (e.g. Decay on a sampled drum pad)
+  disabledInfo?: string
 }) {
   const [drag, setDrag] = useState(false)
   const norm = toNorm(clamp(value ?? spec.def, spec.min, spec.max), spec)
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return
+    if (disabled || e.button !== 0) return
     e.preventDefault()
     const startY = e.clientY
     const startNorm = norm
@@ -101,9 +103,9 @@ export function Knob({ spec, value, onChange, size = 36, accent }: {
   const display = spec.steps ? spec.steps[clamp(Math.round(value), 0, spec.steps.length - 1)] : (spec.fmt ? spec.fmt(value) : value.toFixed(2))
 
   return (
-    <div className={`knob ${drag ? 'dragging' : ''}`} style={{ width: size + 12 }}
-      data-info={`${spec.label}: drag to change, Shift = fine, double-click = reset`}
-      onDoubleClick={() => onChange(spec.def)}>
+    <div className={`knob ${drag ? 'dragging' : ''} ${disabled ? 'disabled' : ''}`} style={{ width: size + 12 }}
+      data-info={disabled ? (disabledInfo ?? `${spec.label} has no effect here`) : `${spec.label}: drag to change, Shift = fine, double-click = reset`}
+      onDoubleClick={() => { if (!disabled) onChange(spec.def) }}>
       <svg width={size} height={size} onPointerDown={onPointerDown}>
         <circle cx={r} cy={r} r={r - 3} className="knob-track" />
         {norm > 0.004 && <path d={`M ${x1} ${y1} A ${r - 3} ${r - 3} 0 ${large} 1 ${x2} ${y2}`} className="knob-arc" style={accent ? { stroke: accent } : undefined} />}
