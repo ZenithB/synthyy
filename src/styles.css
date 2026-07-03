@@ -539,7 +539,7 @@ button { cursor: pointer; background: none; border: none; }
 .palette-hint { color: var(--dim); font-size: 11px; }
 .palette-none { padding: 14px; color: var(--dim); text-align: center; }
 
-.ctx-menu { position: fixed; z-index: 300; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; min-width: 200px; }
+.ctx-menu { position: fixed; z-index: 300; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; min-width: 200px; overflow-y: auto; overscroll-behavior: contain; }
 .ctx-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 10px; border-radius: 5px; color: var(--text); font-size: 12px; }
 .ctx-item .icon { color: var(--dim); flex-shrink: 0; }
 .ctx-item:hover .icon { color: var(--accent); }

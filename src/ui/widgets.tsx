@@ -1,6 +1,6 @@
 // Shared controls: Knob, Fader, Meter, draggable number, modal, context menu.
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ParamSpec, normFromSpec, valueFromSpec } from '../audio/schema'
 import { clamp } from '../types'
@@ -262,6 +262,7 @@ export function openMenu(e: { clientX: number; clientY: number; preventDefault?:
 
 export function ContextMenuHost() {
   const [menu, setMenu] = useState<MenuState>(null)
+  const ref = useRef<HTMLDivElement>(null)
   setMenuGlobal = setMenu
   useEffect(() => {
     if (!menu) return
@@ -273,11 +274,25 @@ export function ContextMenuHost() {
       window.removeEventListener('blur', close)
     }
   }, [menu])
+  // Before paint: measure the real menu size, keep it fully on-screen, and cap
+  // its height to the viewport so long menus scroll instead of clipping.
+  // Rects/innerHeight are visual px; style left/top are layout px (÷ UI zoom).
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || !menu) return
+    el.style.maxHeight = ''
+    const z = Number((document.documentElement.style as any).zoom) || 1
+    const pad = 8 * z
+    const r = el.getBoundingClientRect()
+    const top = Math.max(pad, Math.min(menu.y, window.innerHeight - r.height - pad))
+    const left = Math.max(pad, Math.min(menu.x, window.innerWidth - r.width - pad))
+    el.style.top = `${top / z}px`
+    el.style.left = `${left / z}px`
+    el.style.maxHeight = `${(window.innerHeight - top - pad) / z}px`
+  }, [menu])
   if (!menu) return null
-  const x = Math.min(menu.x, window.innerWidth - 230)
-  const y = Math.min(menu.y, window.innerHeight - menu.items.length * 30 - 20)
   return createPortal(
-    <div className="ctx-menu" style={{ left: x, top: y }} onPointerDown={e => e.stopPropagation()}>
+    <div className="ctx-menu" ref={ref} style={{ left: menu.x, top: menu.y }} onPointerDown={e => e.stopPropagation()}>
       {menu.items.map((it, i) => {
         if (it === 'sep') return <div key={i} className="ctx-sep" />
         if ('custom' in it) return <div key={i} className="ctx-custom" onPointerDown={e => e.stopPropagation()}>{it.custom}</div>
