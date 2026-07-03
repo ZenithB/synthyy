@@ -2,22 +2,24 @@
 // snapping, the ruler seeks, the loop brace sets the loop region, and you can
 // see your collaborators' playheads drift by as ghosts.
 
-import React, { useRef, useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import * as Y from 'yjs'
 import { BAR, CLIP_COLORS, clamp, ticksToBBS } from '../types'
 import {
   tracks, arr, meta, addArrClip, moveArrClip, resizeArrClip, deleteArrClip,
   duplicateArrClip, setClipField, setLoopRegion, arrEndTicks, setTrackMix, clipToJSON,
   clips, clipKey, setAutoOpen, setAutoParam, renameTrack, setMetaField, trackAutoKeys, masterAuto,
-  barTicks, beatTicks,
+  barTicks, beatTicks, isAudioClip, notesOf, setAudioField, mutate,
+  markersList, addMarker, updateMarker, removeMarker,
 } from '../state/doc'
+import { getSampleBuffer } from '../audio/samples'
 import { autoTargets } from '../audio/params'
 import { AutomationLane } from './AutomationLane'
 import { engine } from '../audio/engine'
 import { setUI, ui, useUI, toast } from '../state/store'
 import { useY, useRaf } from './hooks'
-import { openMenu, ColorRow, MenuItem, capturePointer, Knob, HFader, InlineRename } from './widgets'
-import { selectClip, trackHeaderMenu, assignKitToTrack, addSampleToArr, copyArrSelection, hasArrClipboard, pasteArrClipboard } from './actions'
+import { openMenu, ColorRow, MenuItem, capturePointer, Knob, HFader, InlineRename, beginVDrag } from './widgets'
+import { selectClip, trackHeaderMenu, assignKitToTrack, addSampleToArr, copyArrSelection, hasArrClipboard, pasteArrClipboard, splitArrClipAt } from './actions'
 import { Icon } from './icons'
 import { peersList, subscribeAwareness, awarenessVersion } from '../state/net'
 import { MIDI_LOOPS, PROGRESSIONS, progressionClip, clipInKey } from '../packs'
@@ -68,12 +70,166 @@ function GhostPlayheads({ pxPerTick }: { pxPerTick: number }) {
   )
 }
 
+// ---------------- clip content previews ----------------
+
+// Peak cache for waveform previews: 256 abs-max buckets per cropped region.
+// Computed once per (sample, crop); redraws just rescale the buckets.
+const peakCache = new Map<string, Float32Array>()
+function wavePeaks(sampleId: string, buf: AudioBuffer, offset: number, dur: number): Float32Array {
+  const sr = buf.sampleRate
+  const s0 = Math.max(0, Math.min(buf.length - 1, Math.floor(offset * sr)))
+  const n = dur > 0 ? Math.max(1, Math.min(buf.length - s0, Math.floor(dur * sr))) : buf.length - s0
+  const key = `${sampleId}|${s0}|${n}`
+  const hit = peakCache.get(key)
+  if (hit) return hit
+  const B = 256
+  const out = new Float32Array(B)
+  const data = buf.getChannelData(0)
+  const step = n / B
+  for (let b = 0; b < B; b++) {
+    const i0 = s0 + Math.floor(b * step)
+    const i1 = s0 + Math.floor((b + 1) * step)
+    const stride = Math.max(1, Math.floor((i1 - i0) / 64))   // long buckets sample sparsely
+    let peak = 0
+    for (let i = i0; i < i1; i += stride) { const v = Math.abs(data[i] ?? 0); if (v > peak) peak = v }
+    out[b] = peak
+  }
+  peakCache.set(key, out)
+  return out
+}
+
+/** Waveform preview inside an audio clip box (crop + reverse aware). */
+function ClipWave({ m, w, h }: { m: Y.Map<any>; w: number; h: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const sampleId = m.get('sampleId') || ''
+  const offset = m.get('offset') ?? 0
+  const dur = m.get('dur') ?? 0
+  const rev = !!m.get('rev')
+  const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h))
+  useEffect(() => {
+    let iv = 0
+    const draw = () => {
+      const canvas = ref.current
+      if (!canvas) return true
+      const buf = getSampleBuffer(sampleId)   // kicks off a lazy IDB restore when missing
+      if (!buf) return false
+      canvas.width = W; canvas.height = H
+      const ctx = canvas.getContext('2d')!
+      const peaks = wavePeaks(sampleId, buf, offset, dur)
+      ctx.fillStyle = 'rgba(255,255,255,0.35)'
+      const mid = H / 2
+      for (let x = 0; x < W; x++) {
+        const bi = Math.min(255, Math.floor((x / W) * 256))
+        const p = peaks[rev ? 255 - bi : bi]
+        const hh = Math.max(0.5, p * (H / 2 - 1))
+        ctx.fillRect(x, mid - hh, 1, hh * 2)
+      }
+      return true
+    }
+    if (!draw()) iv = window.setInterval(() => { if (draw()) { clearInterval(iv); iv = 0 } }, 300)
+    return () => { if (iv) clearInterval(iv) }
+  }, [sampleId, offset, dur, rev, W, H])
+  return <canvas ref={ref} className="arr-clip-canvas" />
+}
+
+/** Mini piano-roll preview inside a MIDI clip box. */
+function ClipNotes({ m, w, h }: { m: Y.Map<any>; w: number; h: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  // no deps: the arrange view re-renders on any arr change, and redrawing a
+  // handful of tiny rects is cheaper than tracking note-level versions
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h))
+    canvas.width = W; canvas.height = H
+    const entries = notesOf(m)
+    if (!entries.length) return
+    const ctx = canvas.getContext('2d')!
+    const len = m.get('len') ?? BAR
+    let lo = 127, hi = 0
+    for (const [, n] of entries) { if (n.p < lo) lo = n.p; if (n.p > hi) hi = n.p }
+    if (hi - lo < 10) { const c = (hi + lo) / 2; lo = Math.max(0, c - 5); hi = lo + 10 }
+    const rowH = Math.max(1.5, Math.min(4, H / (hi - lo + 3)))
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'
+    for (const [, n] of entries) {
+      const x = (n.s / len) * W
+      const nw = Math.max(1.5, (n.d / len) * W - 0.5)
+      const y = H - ((n.p - lo + 1) / (hi - lo + 2)) * H
+      ctx.globalAlpha = 0.3 + 0.5 * n.v
+      ctx.fillRect(x, y, nw, rowH)
+    }
+    ctx.globalAlpha = 1
+  })
+  return <canvas ref={ref} className="arr-clip-canvas" />
+}
+
+/** Fade handles + gain line drawn over an audio clip (drag to edit). */
+function AudioClipOverlay({ id, m, w, h, pxPerTick }: { id: string; m: Y.Map<any>; w: number; h: number; pxPerTick: number }) {
+  const [gainTip, setGainTip] = useState<number | null>(null)
+  const len = m.get('len') ?? BAR
+  const fadeIn = m.get('fadeIn') ?? 0
+  const fadeOut = m.get('fadeOut') ?? 0
+  const gain = m.get('gainDb') ?? 0
+  const fiPx = clamp(fadeIn * pxPerTick, 0, w)
+  const foPx = clamp(fadeOut * pxPerTick, 0, w)
+  // gain line: +24dB at the top edge, −24dB at the bottom, 0dB mid
+  const gainY = clamp(h / 2 - (gain / 24) * (h / 2 - 3), 3, h - 3)
+  const ref = { kind: 'arr' as const, id }
+
+  const dragFade = (which: 'fadeIn' | 'fadeOut') => (e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    e.stopPropagation(); e.preventDefault()
+    const z = ui.uiZoom || 1
+    const startX = e.clientX
+    const start = which === 'fadeIn' ? fadeIn : fadeOut
+    beginVDrag(ev => {
+      const dt = ((ev.clientX - startX) / z) / pxPerTick
+      const ticks = clamp(start + (which === 'fadeIn' ? dt : -dt), 0, len)
+      setAudioField(ref, which, Math.round(ticks), 'Clip fade')
+    })
+  }
+  const dragGain = (e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    e.stopPropagation(); e.preventDefault()
+    const z = ui.uiZoom || 1
+    const startY = e.clientY
+    const start = gain
+    setGainTip(start)
+    beginVDrag(
+      ev => {
+        const v = clamp(start - ((ev.clientY - startY) / z) / (h / 2 - 3) * 24, -24, 24)
+        setGainTip(v)
+        setAudioField(ref, 'gainDb', Math.round(v * 10) / 10, 'Clip gain')
+      },
+      () => setGainTip(null),
+    )
+  }
+
+  return (
+    <svg className="arr-fade-svg" width={Math.max(1, Math.round(w))} height={h}>
+      {fiPx > 1 && <path className="arr-fade-shade" d={`M 0 ${h} L 0 0 L ${fiPx} 0 Z`} transform={`translate(0,0) scale(1,1)`} />}
+      {fiPx > 1 && <line className="arr-fade-line" x1={0} y1={h} x2={fiPx} y2={0} />}
+      {foPx > 1 && <path className="arr-fade-shade" d={`M ${w} ${h} L ${w} 0 L ${w - foPx} 0 Z`} />}
+      {foPx > 1 && <line className="arr-fade-line" x1={w} y1={h} x2={w - foPx} y2={0} />}
+      <line className="arr-gain-vis" x1={0} y1={gainY} x2={w} y2={gainY} />
+      <line className="arr-gain-line" x1={0} y1={gainY} x2={w} y2={gainY} onPointerDown={dragGain}
+        data-info="Clip gain — drag up/down (dB)" />
+      <circle className="arr-fade-handle" cx={clamp(fiPx, 4, w - 4)} cy={4} r={3.5} onPointerDown={dragFade('fadeIn')}
+        data-info="Fade-in — drag right" />
+      <circle className="arr-fade-handle" cx={clamp(w - foPx, 4, w - 4)} cy={4} r={3.5} onPointerDown={dragFade('fadeOut')}
+        data-info="Fade-out — drag left" />
+      {gainTip !== null && <text className="arr-gain-tip" x={6} y={clamp(gainY - 4, 10, h - 4)}>{`${gainTip > 0 ? '+' : ''}${gainTip.toFixed(1)} dB`}</text>}
+    </svg>
+  )
+}
+
 type MoveItem = { id: string; origStart: number; origLane: number }
 type DragState =
   | { type: 'move'; id: string; startX: number; startY: number; origStart: number; origLane: number; dx: number; dLane: number; copy: boolean; items: MoveItem[] }
   | { type: 'resize'; id: string; startX: number; origLen: number; dLen: number }
   | { type: 'loop'; edge: 'start' | 'end' | 'mid'; startX: number; origStart: number; origEnd: number; cur: [number, number] }
   | { type: 'marquee'; x0: number; y0: number; x1: number; y1: number; moved: boolean }
+  | { type: 'timesel'; t0: number; t1: number; moved: boolean }
   | null
 
 export function ArrangementView() {
@@ -91,6 +247,7 @@ export function ArrangementView() {
   const z = uiZoom || 1
   const [drag, setDrag] = useState<DragState>(null)
   const selArrIds = useUI(s => s.selArrIds)        // marquee multi-selection
+  const timeSel = useUI(s => s.timeSel)            // time-range selection (ticks)
   const [renamingTid, setRenamingTid] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const headsRef = useRef<HTMLDivElement>(null)
@@ -161,6 +318,106 @@ export function ArrangementView() {
     }
   }
 
+  // ---- split at playhead (S) ----
+  const playheadTicks = () => Math.round(engine.mode === 'arr' && engine.playing ? engine.positionTicks() : engine.arrSeekTicks)
+  const splitAtPlayhead = () => {
+    const cut = playheadTicks()
+    // selected clips first; with no selection, split whatever is under the playhead
+    const chosen = ui.selArrIds.length ? ui.selArrIds : (ui.selClip?.kind === 'arr' ? [ui.selClip.id] : [])
+    const targets: string[] = chosen.length ? chosen : (() => {
+      const out: string[] = []
+      arr.forEach((m: Y.Map<any>, id: string) => {
+        const s = m.get('start') ?? 0, l = m.get('len') ?? 0
+        if (cut > s && cut < s + l) out.push(id)
+      })
+      return out
+    })()
+    let didSplit = false
+    for (const id of targets) {
+      const m = arr.get(id) as Y.Map<any> | undefined
+      if (!m) continue
+      const s = m.get('start') ?? 0, l = m.get('len') ?? 0
+      if (cut > s && cut < s + l && splitArrClipAt(id, cut - s)) didSplit = true
+    }
+    if (didSplit) { setUI({ selArrIds: [], selClip: null }); toast('Split at playhead') }
+  }
+  React.useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if (e.key.toLowerCase() === 's' && !e.metaKey && !e.ctrlKey && !e.altKey) splitAtPlayhead()
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  })
+
+  // ---- auto-crossfade: overlapping audio clips on a track fade into each other ----
+  const applyAutoCrossfades = (tids: Set<string>) => {
+    type C = { m: Y.Map<any>; start: number; len: number }
+    const byTrack = new Map<string, C[]>()
+    arr.forEach((m: Y.Map<any>) => {
+      if (!m.get('audio')) return
+      const tid = m.get('trackId')
+      if (!tids.has(tid)) return
+      const list = byTrack.get(tid) ?? []
+      list.push({ m, start: m.get('start') ?? 0, len: m.get('len') ?? 0 })
+      byTrack.set(tid, list)
+    })
+    const jobs: Array<() => void> = []
+    byTrack.forEach(list => {
+      list.sort((a, b) => a.start - b.start)
+      for (let i = 0; i < list.length - 1; i++) {
+        const a = list[i], b = list[i + 1]
+        const overlap = Math.round(a.start + a.len - b.start)
+        if (overlap > 2 && overlap < Math.min(a.len, b.len)) {
+          jobs.push(() => { a.m.set('fadeOut', overlap); b.m.set('fadeIn', overlap) })
+        }
+      }
+    })
+    if (jobs.length) mutate('Auto crossfade', () => jobs.forEach(j => j()))
+  }
+
+  // ---- time-range actions ----
+  const deleteRange = (t0: number, t1: number) => {
+    // split every clip crossing a bound, then delete what's fully inside
+    const crossing = (bound: number) => {
+      const out: { id: string; cut: number }[] = []
+      arr.forEach((m: Y.Map<any>, id: string) => {
+        const s = m.get('start') ?? 0, l = m.get('len') ?? 0
+        if (s < bound - 2 && s + l > bound + 2) out.push({ id, cut: bound - s })
+      })
+      return out
+    }
+    crossing(t0).forEach(c => splitArrClipAt(c.id, c.cut))
+    crossing(t1).forEach(c => splitArrClipAt(c.id, c.cut))
+    const doomed: string[] = []
+    arr.forEach((m: Y.Map<any>, id: string) => {
+      const s = m.get('start') ?? 0, l = m.get('len') ?? 0
+      if (s >= t0 - 2 && s + l <= t1 + 2) doomed.push(id)
+    })
+    doomed.forEach(id => deleteArrClip(id))
+    setUI({ selArrIds: [], selClip: null })
+    if (doomed.length) toast(`Removed ${doomed.length} clip${doomed.length > 1 ? 's' : ''}`)
+  }
+  const stripMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if ((e.target as HTMLElement).closest('.arr-marker')) return
+    const ts = ui.timeSel
+    const items: MenuItem[] = []
+    if (ts) {
+      items.push(
+        { label: <><Icon name="loop" size={12} /> Loop this range</>, fn: () => setLoopRegion(ts[0], ts[1], true) },
+        { label: <><Icon name="map" size={12} /> Create region from selection</>, fn: () => { const n = prompt('Region name', 'Region'); if (n != null) addMarker(ts[0], n.trim() || 'Region', ts[1] - ts[0]) } },
+        { label: <><Icon name="close" size={12} /> Delete clips in range</>, fn: () => deleteRange(ts[0], ts[1]), danger: true },
+        'sep',
+        { label: 'Clear selection (Esc)', fn: () => setUI({ timeSel: null }) },
+      )
+    } else {
+      items.push({ label: 'Drag here to select a time range · double-click adds a marker', fn: () => {}, disabled: true })
+    }
+    openMenu(e, items)
+  }
+
   // ----- clip drag handlers -----
   const itemOf = (cid: string): MoveItem | null => {
     const m = arr.get(cid) as Y.Map<any> | undefined
@@ -210,6 +467,9 @@ export function ArrangementView() {
       setDrag({ ...drag, x1: (e.clientX - rect.left) / z, y1: (e.clientY - rect.top) / z, moved: true })
     } else if (drag.type === 'resize') {
       setDrag({ ...drag, dLen: (e.clientX - drag.startX) / z / pxPerTick })
+    } else if (drag.type === 'timesel') {
+      const rect = lanesRef.current!.getBoundingClientRect()
+      setDrag({ ...drag, t1: Math.max(0, (e.clientX - rect.left) / z / pxPerTick), moved: true })
     } else if (drag.type === 'loop') {
       const dt = (e.clientX - drag.startX) / z / pxPerTick
       let s = drag.origStart
@@ -241,6 +501,17 @@ export function ArrangementView() {
         }
       }
       if (drag.copy && drag.items.length > 1 && copies.length) setUI({ selArrIds: copies, selClip: null })
+      // overlapping audio clips fade into each other (source + destination tracks)
+      const affected = new Set<string>()
+      for (const it of drag.items) {
+        const m = arr.get(it.id) as Y.Map<any> | undefined
+        if (m) affected.add(m.get('trackId'))
+        const lane = rows[clamp(it.origLane + drag.dLane, 0, Math.max(0, nClipRows - 1))]
+        if (lane) affected.add(lane.id)
+        const orig = rows[it.origLane]
+        if (orig) affected.add(orig.id)
+      }
+      applyAutoCrossfades(affected)
     } else if (drag.type === 'marquee') {
       if (!drag.moved) {
         engine.seekArr(snap(Math.max(0, Math.min(drag.x0, drag.x1) / pxPerTick), e.shiftKey))
@@ -262,6 +533,15 @@ export function ArrangementView() {
     } else if (drag.type === 'resize') {
       const newLen = Math.max(BAR / 4, snap(drag.origLen + drag.dLen, e.shiftKey))
       resizeArrClip(drag.id, newLen)
+      const m = arr.get(drag.id) as Y.Map<any> | undefined
+      if (m) applyAutoCrossfades(new Set([m.get('trackId')]))
+    } else if (drag.type === 'timesel') {
+      if (!drag.moved || Math.abs(drag.t1 - drag.t0) < 4) setUI({ timeSel: null })   // click clears
+      else {
+        const a = snap(Math.min(drag.t0, drag.t1), true)
+        const b = snap(Math.max(drag.t0, drag.t1), true)
+        setUI({ timeSel: b - a > 2 ? [a, b] : null })
+      }
     } else if (drag.type === 'loop') {
       setLoopRegion(drag.cur[0], drag.cur[1], true)
     }
@@ -294,6 +574,15 @@ export function ArrangementView() {
     const isSel = (ui.selClip?.kind === 'arr' && ui.selClip.id === id) || selArrIds.includes(id)
     const menu: MenuItem[] = [
       { label: <><Icon name="pencil" size={12} /> Edit notes</>, fn: () => selectClip({ kind: 'arr', id }, true) },
+      {
+        label: <><Icon name="strum" size={12} /> Split at playhead (S)</>,
+        fn: () => {
+          const cur = playheadTicks()
+          const s = m.get('start') ?? 0, l = m.get('len') ?? 0
+          if (cur > s && cur < s + l) splitArrClipAt(id, cur - s)
+          else toast('Move the playhead inside the clip to split it')
+        },
+      },
       { label: 'Duplicate after', fn: () => duplicateArrClip(id) },
       { custom: <ColorRow colors={CLIP_COLORS} onPick={i => setClipField({ kind: 'arr', id }, 'color', i)} /> },
       'sep',
@@ -317,8 +606,14 @@ export function ArrangementView() {
         onPointerDown={e => { if (e.button === 0) beginMove(e, id) }}
         onDoubleClick={() => selectClip({ kind: 'arr', id }, true)}
         onContextMenu={e => openMenu(e, menu)}
-        data-info="Drag to move (Alt = copy, Shift = fine). Drag right edge to resize. Double-click to edit."
+        data-info="Drag to move (Alt = copy, Shift = fine). Drag right edge to resize. S splits at the playhead. Double-click to edit."
       >
+        {isAudioClip(m)
+          ? <>
+              <ClipWave m={m} w={Math.max(8, len * pxPerTick - 2)} h={LANE_H - 7} />
+              <AudioClipOverlay id={id} m={m} w={Math.max(8, len * pxPerTick - 2)} h={LANE_H - 7} pxPerTick={pxPerTick} />
+            </>
+          : <ClipNotes m={m} w={Math.max(8, len * pxPerTick - 2)} h={LANE_H - 7} />}
         <span className="arr-clip-name">{m.get('name')}</span>
         <div className="arr-clip-resize" onPointerDown={e => beginResize(e, id)} />
       </div>,
@@ -338,6 +633,7 @@ export function ArrangementView() {
           >LOOP</button>
           <span className="arr-pos">{ticksToBBS(Math.round(engine.arrSeekTicks), barT, beatTicks())}</span>
         </div>
+        <div className="arr-corner-sub" data-info="Markers & time selection live in the strip to the right" />
         <div className="arr-heads-inner" ref={headsRef}>
           {rows.map(r => {
             const tid = r.id
@@ -422,6 +718,74 @@ export function ArrangementView() {
                 capturePointer(e)
               }}
             />
+          </div>
+
+          {/* markers / regions / time-selection strip (sticky, under the ruler) */}
+          <div
+            className="arr-markstrip"
+            style={{ width }}
+            onPointerDown={e => {
+              if (e.button !== 0) return
+              if ((e.target as HTMLElement).closest('.arr-marker')) return
+              const rect = lanesRef.current!.getBoundingClientRect()
+              const t = Math.max(0, (e.clientX - rect.left) / z / pxPerTick)
+              setDrag({ type: 'timesel', t0: t, t1: t, moved: false })
+              capturePointer(e)
+            }}
+            onDoubleClick={e => {
+              if ((e.target as HTMLElement).closest('.arr-marker')) return
+              const rect = lanesRef.current!.getBoundingClientRect()
+              const t = Math.max(0, snap((e.clientX - rect.left) / z / pxPerTick, e.shiftKey))
+              const name = prompt('Marker name', `Marker ${markersList().length + 1}`)
+              if (name != null) addMarker(t, name.trim() || 'Marker')
+            }}
+            onContextMenu={stripMenu}
+            data-info="Drag: select a time range (right-click it for loop/region/delete). Double-click: add a marker. Drag a marker to move it; click to jump there."
+          >
+            {markersList().map(mk => (
+              <div
+                key={mk.id}
+                className={`arr-marker ${mk.len > 0 ? 'region' : ''}`}
+                style={{
+                  left: mk.t * pxPerTick,
+                  width: mk.len > 0 ? Math.max(6, mk.len * pxPerTick) : undefined,
+                  borderColor: CLIP_COLORS[mk.color] ?? 'var(--accent)',
+                  background: mk.len > 0 ? `color-mix(in srgb, ${CLIP_COLORS[mk.color] ?? '#888'} 26%, transparent)` : undefined,
+                }}
+                onPointerDown={e => {
+                  if (e.button !== 0) return
+                  e.stopPropagation()
+                  const startX = e.clientX
+                  const t0 = mk.t
+                  let moved = false
+                  beginVDrag(
+                    ev => {
+                      const dt = ((ev.clientX - startX) / z) / pxPerTick
+                      if (Math.abs(dt) > 2) moved = true
+                      if (moved) updateMarker(mk.id, { t: Math.max(0, snap(t0 + dt, ev.shiftKey)) })
+                    },
+                    () => { if (!moved) engine.seekArr(t0) },
+                  )
+                }}
+                onContextMenu={e => {
+                  e.preventDefault(); e.stopPropagation()
+                  openMenu(e, [
+                    { label: <><Icon name="pencil" size={11} /> Rename</>, fn: () => { const n = prompt('Name', mk.name); if (n?.trim()) updateMarker(mk.id, { name: n.trim() }) } },
+                    ...(mk.len > 0 ? [{ label: <><Icon name="loop" size={11} /> Loop this region</>, fn: () => setLoopRegion(mk.t, mk.t + mk.len, true) }] : []),
+                    { custom: <ColorRow colors={CLIP_COLORS} onPick={i => updateMarker(mk.id, { color: i })} /> },
+                    'sep',
+                    { label: <><Icon name="close" size={11} /> Delete</>, fn: () => removeMarker(mk.id), danger: true },
+                  ])
+                }}
+                data-info={mk.len > 0 ? 'Region — click: jump to start · drag: move · right-click: loop/rename/delete' : 'Marker — click: jump here · drag: move · right-click: rename/delete'}
+              >
+                <span className="arr-marker-name">{mk.name}</span>
+              </div>
+            ))}
+            {(drag?.type === 'timesel' ? [Math.min(drag.t0, drag.t1), Math.max(drag.t0, drag.t1)] as [number, number] : timeSel) && (() => {
+              const ts = drag?.type === 'timesel' ? [Math.min(drag.t0, drag.t1), Math.max(drag.t0, drag.t1)] as [number, number] : timeSel!
+              return <div className="arr-timesel-seg" style={{ left: ts[0] * pxPerTick, width: Math.max(1, (ts[1] - ts[0]) * pxPerTick) }} />
+            })()}
           </div>
 
           <div
@@ -524,6 +888,12 @@ export function ArrangementView() {
                 width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0),
               }} />
             )}
+            {(() => {
+              const ts = drag?.type === 'timesel' && drag.moved
+                ? [Math.min(drag.t0, drag.t1), Math.max(drag.t0, drag.t1)] as [number, number]
+                : timeSel
+              return ts && <div className="arr-timesel-band" style={{ left: ts[0] * pxPerTick, width: Math.max(1, (ts[1] - ts[0]) * pxPerTick) }} />
+            })()}
             <Playhead pxPerTick={pxPerTick} />
             <GhostPlayheads pxPerTick={pxPerTick} />
           </div>

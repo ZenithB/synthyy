@@ -918,6 +918,30 @@ export const setAutoParam = (trackId: string, key: string) => {
   const t = trackById(trackId); if (t) mutate('Automation parameter', () => t.set('autoParam', key))
 }
 
+// ---------- arrangement markers & regions ----------
+// Stored as a plain array on shared meta: small, syncs to collaborators, and
+// rides the existing undo manager (meta is a tracked type). A marker with
+// len === 0 is a point flag; len > 0 makes it a named region span.
+export type Marker = { id: string; t: number; len: number; name: string; color: number }
+export function markersList(): Marker[] {
+  const raw = meta.get('markers')
+  return Array.isArray(raw) ? raw as Marker[] : []
+}
+function writeMarkers(label: string, next: Marker[]) {
+  mutate(label, () => meta.set('markers', [...next].sort((a, b) => a.t - b.t)))
+}
+export function addMarker(t: number, name: string, len = 0, color = 4): string {
+  const id = id8()
+  writeMarkers(len > 0 ? 'Add region' : 'Add marker', [...markersList(), { id, t: Math.max(0, Math.round(t)), len: Math.max(0, Math.round(len)), name, color }])
+  return id
+}
+export function updateMarker(id: string, patch: Partial<Omit<Marker, 'id'>>) {
+  writeMarkers('Edit marker', markersList().map(mk => mk.id === id ? { ...mk, ...patch, t: Math.max(0, Math.round(patch.t ?? mk.t)) } : mk))
+}
+export function removeMarker(id: string) {
+  writeMarkers('Delete marker', markersList().filter(mk => mk.id !== id))
+}
+
 // ---------- follow actions (session clips) ----------
 export function setFollow(clipMap: Y.Map<any>, patch: Record<string, any>) {
   mutate('Follow action', () => {
@@ -1187,7 +1211,9 @@ export function duplicateArrClip(aid: string): string | null {
 /**
  * Cut an arrangement clip in two at `cutTicks` from its start. For audio clips
  * the caller passes the sample crop for each half (computed from the buffer) so
- * playback stays continuous across the cut. Returns the new right-hand clip id.
+ * playback stays continuous across the cut. MIDI clips partition their notes
+ * and envelopes: a note spanning the cut is truncated in the left half and
+ * continues as a new note in the right. Returns the new right-hand clip id.
  */
 export function splitArrClip(aid: string, cutTicks: number, audio?: { leftDur: number; rightOffset: number; rightDur: number }): string | null {
   const m = arr.get(aid) as Y.Map<any>
@@ -1200,9 +1226,43 @@ export function splitArrClip(aid: string, cutTicks: number, audio?: { leftDur: n
     const json = clipToJSON(m)
     json.len = len - cutTicks
     if (json.audio && audio) { json.audio.offset = audio.rightOffset; json.audio.dur = audio.rightDur }
+    if (!json.audio) {
+      // right half: notes at/after the cut (rebased); spanning notes continue
+      const right: Record<string, Note> = {}
+      for (const [nid, n] of Object.entries(json.notes)) {
+        if (n.s >= cutTicks) right[nid] = { ...n, s: n.s - cutTicks }
+        else if (n.s + n.d > cutTicks) right[id8()] = { ...n, s: 0, d: n.s + n.d - cutTicks }
+      }
+      json.notes = right
+      if (json.env) {
+        const env: NonNullable<ClipJSON['env']> = {}
+        for (const [k, pts] of Object.entries(json.env)) {
+          const r = pts.filter(p => p.t >= cutTicks).map(p => ({ t: p.t - cutTicks, v: p.v }))
+          if (r.length) env[k] = r
+        }
+        json.env = env
+      }
+    }
     arr.set(rid, jsonToClipMap(json, { trackId: m.get('trackId'), start: start + cutTicks, id: rid }))
     m.set('len', cutTicks)
     if (json.audio && audio) m.set('dur', audio.leftDur)
+    if (!m.get('audio')) {
+      // left half: drop notes past the cut, truncate the spanning ones
+      const nm = m.get('notes') as Y.Map<Note>
+      const del: string[] = []
+      const patch: [string, Note][] = []
+      nm.forEach((n, nid) => {
+        if (n.s >= cutTicks) del.push(nid)
+        else if (n.s + n.d > cutTicks) patch.push([nid, { ...n, d: cutTicks - n.s }])
+      })
+      del.forEach(nid => nm.delete(nid))
+      patch.forEach(([nid, n]) => nm.set(nid, n))
+      const envM = m.get('env') as Y.Map<any> | undefined
+      envM?.forEach((a: Y.Array<any>, k: string) => {
+        const keep = a.toArray().filter((p: any) => p.t <= cutTicks)
+        if (keep.length !== a.length) { a.delete(0, a.length); if (keep.length) a.push(keep) }
+      })
+    }
   })
   return rid
 }

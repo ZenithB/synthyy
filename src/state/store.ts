@@ -11,6 +11,7 @@ export type UIState = {
   armTrackId: string | null
   selClip: ClipRef | null
   selArrIds: string[]            // arrangement marquee multi-selection (clip ids)
+  timeSel: [number, number] | null   // arrangement time-range selection (ticks)
   detailOpen: boolean
   detailTab: 'clip' | 'devices'
   detailHeight: number
@@ -60,6 +61,7 @@ export const ui: UIState = {
   armTrackId: null,
   selClip: null,
   selArrIds: [],
+  timeSel: null,
   detailOpen: false,
   detailTab: 'clip',
   detailHeight: savedHeight,

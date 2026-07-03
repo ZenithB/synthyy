@@ -127,7 +127,8 @@ export function App() {
       if (e.key === 'Escape') {
         if (ui.paletteOpen || ui.shareOpen || ui.helpOpen || ui.historyOpen) {
           setUI({ paletteOpen: false, shareOpen: false, helpOpen: false, historyOpen: false })
-        } else if (ui.detailOpen) setUI({ detailOpen: false })
+        } else if (ui.timeSel) setUI({ timeSel: null })
+        else if (ui.detailOpen) setUI({ detailOpen: false })
         return
       }
       if (e.key === '?') { setUI({ helpOpen: !ui.helpOpen }); return }

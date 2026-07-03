@@ -8,6 +8,7 @@ import {
   jsonToClipMap, loadProject, mutate, scenes, setInstrument, trackById, ClipJSON, TrackJSON,
   addAudioTrack, createAudioClip, addBusTrack, tracks, busCanReach, setTrackOutput, setBusSend,
   setTrackColor, duplicateTrack, moveTrack, removeTrack, assignDrumKit, addArrClip, arr, id8,
+  splitArrClip,
 } from '../state/doc'
 import { ColorRow, MenuItem } from './widgets'
 import { setUI, toast, ui } from '../state/store'
@@ -122,6 +123,31 @@ export function pickAudioFolder(baseFolder = '') {
     importAudioToBank(items)
   }
   input.click()
+}
+
+/**
+ * Split an arrangement clip at `cutTicks` from its start, handling both kinds:
+ * MIDI clips partition notes/envelopes in doc.splitArrClip; audio clips also
+ * need their sample crop recomputed so each half keeps playing its own slice
+ * (the clip stretches its cropped region across its tick length, so the cut
+ * maps proportionally — same math as the AudioEditor's Split button).
+ */
+export function splitArrClipAt(aid: string, cutTicks: number): string | null {
+  const m = arr.get(aid) as Y.Map<any> | undefined
+  if (!m) return null
+  const len = m.get('len') ?? BAR
+  if (cutTicks <= 2 || cutTicks >= len - 2) return null
+  if (!m.get('audio')) return splitArrClip(aid, cutTicks)
+  const buf = getSampleBuffer(m.get('sampleId') || '')
+  const bufDur = buf?.duration ?? 0
+  if (!bufDur) { toast('Sample still loading — try again in a moment'); return null }
+  const offset = m.get('offset') ?? 0
+  const durRaw = m.get('dur') ?? 0
+  const regionStart = Math.max(0, Math.min(offset, bufDur))
+  const regionDur = durRaw > 0 ? Math.min(durRaw, bufDur - regionStart) : bufDur - regionStart
+  const cutSec = (cutTicks / len) * regionDur
+  if (cutSec <= 0.02 || cutSec >= regionDur - 0.02) return null
+  return splitArrClip(aid, cutTicks, { leftDur: cutSec, rightOffset: regionStart + cutSec, rightDur: regionDur - cutSec })
 }
 
 /** Place a bank sample as a session audio clip (used by slot drag-drops). */
