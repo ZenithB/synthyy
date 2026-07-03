@@ -2,7 +2,7 @@
 
 import React, { useRef, useState, useSyncExternalStore } from 'react'
 import { LAUNCH_Q_OPTIONS, clamp } from '../types'
-import { meta, setBpm, setSwing, setHumanize, setSwingSubdivision, setTitle, setKeyScale, setLaunchQ } from '../state/doc'
+import { meta, setBpm, setSwing, setHumanize, setSwingSubdivision, setTitle, setKeyScale, setLaunchQ, setTimeSignature, timeSig, barTicks, beatTicks, TS_TOP_MAX, TS_BOTTOMS } from '../state/doc'
 import { undoMgr } from '../state/undo'
 import { engine } from '../audio/engine'
 import { setUI, ui, useUI } from '../state/store'
@@ -35,9 +35,31 @@ function PlayButton() {
 function Position() {
   const ref = useRef<HTMLSpanElement>(null)
   useRaf(() => {
-    if (ref.current) ref.current.textContent = ticksToBBS(Math.round(engine.playing ? engine.positionTicks() : engine.arrSeekTicks))
+    if (ref.current) ref.current.textContent = ticksToBBS(Math.round(engine.playing ? engine.positionTicks() : engine.arrSeekTicks), barTicks(), beatTicks())
   })
   return <span ref={ref} className="position">1.1.1</span>
+}
+
+// Time signature: the two numerals stacked, click either to pick. Top numeral
+// (1–30) = counted notes per bar; bottom (2/4/8/16) = which note value counts
+// the beat (2 = half, 4 = quarter, 8 = eighth, 16 = sixteenth).
+const BOTTOM_NAMES: Record<number, string> = { 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th' }
+function MeterControl() {
+  const { top, bottom } = timeSig()
+  const pickTop = (e: React.MouseEvent) => openMenu(e, Array.from({ length: TS_TOP_MAX }, (_, i) => ({
+    label: `${i + 1 === top ? '✓ ' : '  '}${i + 1}`,
+    fn: () => setTimeSignature(i + 1, timeSig().bottom),
+  })))
+  const pickBottom = (e: React.MouseEvent) => openMenu(e, TS_BOTTOMS.map(b => ({
+    label: `${b === bottom ? '✓ ' : '  '}${b} — ${BOTTOM_NAMES[b]} notes`,
+    fn: () => setTimeSignature(timeSig().top, b),
+  })))
+  return (
+    <div className="meter-ctl" data-info={`Time signature: ${top} ${BOTTOM_NAMES[bottom]}-notes per bar. Click the top numeral (beats per bar) or the bottom one (counted note value) to change.`}>
+      <button className="meter-num" onClick={pickTop}>{top}</button>
+      <button className="meter-num" onClick={pickBottom}>{bottom}</button>
+    </div>
+  )
 }
 
 function Avatars() {
@@ -119,6 +141,7 @@ export function Topbar() {
         <label className="tlabel" data-info="Tempo — drag the number or tap">BPM</label>
         <NumberDrag value={meta.get('bpm') ?? 120} min={40} max={240} step={1} onChange={setBpm} info="Tempo: drag vertically, double-click to type" />
         <button className="tbtn" onClick={tap} data-info="Tap tempo — tap 3+ times">TAP</button>
+        <MeterControl />
         <div
           data-info="Swing groove — right-click to set its timing (1/4, 1/8, 1/16 note)"
           onContextMenu={e => {

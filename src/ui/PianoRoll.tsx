@@ -8,7 +8,7 @@ import * as Y from 'yjs'
 import { BAR, GRID_OPTIONS, DRUM_PADS, STEP16, Note, clamp, CLIP_COLORS } from '../types'
 import {
   getClipMap, notesOf, addNote, addNotes, updateNotes, deleteNotes, setClipField, meta, trackById,
-  envPoints, setEnvPoints, followOf, setFollow,
+  envPoints, setEnvPoints, followOf, setFollow, barTicks, beatTicks,
 } from '../state/doc'
 import { setUI, ui, useUI, toast } from '../state/store'
 import { useY, subscribeFrame } from './hooks'
@@ -34,7 +34,10 @@ let noteClip: Note[] = []
 // 16-step drum grid — the fastest way to build a beat. Writes to clip notes.
 function StepGrid({ clipMap, trackId }: { clipMap: Y.Map<any>; trackId: string | null }) {
   const len = clipMap.get('len') ?? BAR
-  const nSteps = Math.min(64, Math.max(16, Math.round(len / STEP16)))
+  const nSteps = Math.min(64, Math.max(4, Math.round(len / STEP16)))
+  // beat/bar shading follows the meter (16th-note steps per beat / per bar)
+  const stepsPerBeat = Math.max(1, Math.round(beatTicks() / STEP16))
+  const stepsPerBar = Math.max(1, Math.round(barTicks() / STEP16))
   const notes = notesOf(clipMap)
   const at = (pad: number, step: number) =>
     notes.find(([, n]) => n.p === pad && Math.round(n.s / STEP16) === step)
@@ -53,7 +56,7 @@ function StepGrid({ clipMap, trackId }: { clipMap: Y.Map<any>; trackId: string |
               const hit = at(pad, step)
               return (
                 <button key={step}
-                  className={`step-cell ${hit ? 'on' : ''} ${step % 4 === 0 ? 'beat' : ''} ${step % 16 === 0 ? 'bar' : ''}`}
+                  className={`step-cell ${hit ? 'on' : ''} ${step % stepsPerBeat === 0 ? 'beat' : ''} ${step % stepsPerBar === 0 ? 'bar' : ''}`}
                   style={hit ? { opacity: 0.4 + 0.6 * hit[1].v } : undefined}
                   onClick={() => toggle(pad, step)} />
               )
@@ -234,19 +237,28 @@ export function PianoRoll() {
         ctx.fillRect(KEY_W, y, W - KEY_W, rowH - 0.5)
       }
 
-      // vertical grid
-      const ticksVisible = (W - KEY_W) / pxPerTick + scrollX / pxPerTick
-      for (let t = 0; t <= Math.max(len, ticksVisible); t += gridTicks) {
+      // vertical grid — three passes so bar/beat shading follows the METER even
+      // when the grid resolution doesn't divide the bar (e.g. 1/4 grid in 7/8):
+      // sub-grid at the grid setting, then beat lines, then bar lines on top.
+      const barT = barTicks()
+      const beatT = beatTicks()
+      const maxTick = Math.max(len, (W - KEY_W) / pxPerTick + scrollX / pxPerTick)
+      const vline = (t: number, style: string) => {
         const x = KEY_W + t * pxPerTick - scrollX
-        if (x < KEY_W - 1 || x > W) continue
-        const isBar = t % BAR === 0
-        const isBeat = t % (BAR / 4) === 0
-        ctx.strokeStyle = isBar ? pal.gridBar : isBeat ? pal.gridBeat : pal.gridSub
+        if (x < KEY_W - 1 || x > W) return
+        ctx.strokeStyle = style
         ctx.beginPath()
         ctx.moveTo(x, 0)
         ctx.lineTo(x, gridH)
         ctx.stroke()
       }
+      for (let t = 0; t <= maxTick; t += gridTicks) {
+        if (t % beatT !== 0) vline(t, pal.gridSub)
+      }
+      for (let t = 0; t <= maxTick; t += beatT) {
+        if (t % barT !== 0) vline(t, pal.gridBeat)
+      }
+      for (let t = 0; t <= maxTick; t += barT) vline(t, pal.gridBar)
       // beyond-loop shade
       const loopX = KEY_W + len * pxPerTick - scrollX
       if (loopX < W) {
@@ -878,7 +890,7 @@ export function PianoRoll() {
     sel.current = new Set(ids)
     bump()
   }
-  const lenBars = Math.round((clipMap.get('len') ?? BAR) / BAR * 4) / 4
+  const lenBars = Math.round((clipMap.get('len') ?? barTicks()) / barTicks() * 4) / 4
 
   const toolsMenu = (e: React.MouseEvent) => openMenu(e, [
     { label: <><Icon name="chord" size={12} /> Chordify (diatonic)</>, fn: () => replaceSelWith(tools.chordify(entriesSel(), root, scaleId), 'Chordify') },
@@ -941,7 +953,7 @@ export function PianoRoll() {
         </button>
         <label className="roll-field" data-info="Clip length in bars">
           Len
-          <select value={lenBars} onChange={e => setClipField(selClip, 'len', Math.round(+e.target.value * BAR), 'Clip length')}>
+          <select value={lenBars} onChange={e => setClipField(selClip, 'len', Math.round(+e.target.value * barTicks()), 'Clip length')}>
             {[0.5, 1, 2, 4, 8, 16].map(b => <option key={b} value={b}>{b} bar{b !== 1 ? 's' : ''}</option>)}
           </select>
         </label>

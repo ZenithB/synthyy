@@ -57,6 +57,30 @@ function loadOpen(): Record<string, boolean> {
   try { return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') } catch { return {} }
 }
 
+// Collapsible sub-group inside a section (instrument categories, loop
+// categories…). Open state persists locally, like the sections themselves.
+const SUBOPEN_KEY = 'sf-browser-subopen'
+function loadSubOpen(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(SUBOPEN_KEY) || '{}') } catch { return {} }
+}
+function SubGroup({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(() => loadSubOpen()[id] ?? true)
+  const toggle = () => {
+    const next = !open
+    setOpen(next)
+    const all = loadSubOpen(); all[id] = next
+    localStorage.setItem(SUBOPEN_KEY, JSON.stringify(all))
+  }
+  return (
+    <div className="bsubgroup">
+      <button className="bcat bcat-toggle" onClick={toggle} data-info="Click to collapse/expand this group">
+        <span className={`tri ${open ? 'open' : ''}`}>▸</span> {title}
+      </button>
+      {open && children}
+    </div>
+  )
+}
+
 function Section({ id, title, open, onToggle, onReorder, children }: {
   id: string; title: string; open: boolean
   onToggle: () => void
@@ -350,8 +374,7 @@ export function Browser() {
     instruments: {
       title: 'Instruments',
       body: () => cats.map(cat => (
-        <div key={cat}>
-          <div className="bcat">{cat}</div>
+        <SubGroup key={cat} id={`inst:${cat}`} title={cat}>
           {presets.filter(p => p.cat === cat).map(p => (
             <div key={p.name} className="bitem" draggable
               onDragStart={e => e.dataTransfer.setData('stg/preset', p.name)}
@@ -362,7 +385,7 @@ export function Browser() {
               <Star id={`i:${p.name}`} />
             </div>
           ))}
-        </div>
+        </SubGroup>
       )),
     },
     drumkits: {
@@ -401,8 +424,7 @@ export function Browser() {
         const items = loops.filter(l => l.cat === cat)
         if (!items.length) return null
         return (
-          <div key={cat}>
-            <div className="bcat">{cat}</div>
+          <SubGroup key={cat} id={`loops:${cat}`} title={cat}>
             {items.map(l => (
               <div key={l.name} className="bitem" draggable
                 onDragStart={e => e.dataTransfer.setData('stg/loop', l.name)}
@@ -413,7 +435,7 @@ export function Browser() {
                 <span className="bitem-icon"><Icon name={LOOP_ICONS[cat] ?? 'note'} size={12} /></span>{l.name}
               </div>
             ))}
-          </div>
+          </SubGroup>
         )
       }),
     },

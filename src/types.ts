@@ -57,9 +57,11 @@ export function clamp(v: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, v))
 }
 
-export function ticksToBBS(ticks: number) {
-  const bar = Math.floor(ticks / BAR) + 1
-  const beat = Math.floor((ticks % BAR) / PPQ) + 1
-  const six = Math.floor((ticks % PPQ) / STEP16) + 1
+/** Ticks → "bar.beat.sixteenth". Pass the current meter's bar/beat tick sizes
+ *  (defaults keep the legacy 4/4 behaviour). */
+export function ticksToBBS(ticks: number, barT = BAR, beatT = PPQ) {
+  const bar = Math.floor(ticks / barT) + 1
+  const beat = Math.floor((ticks % barT) / beatT) + 1
+  const six = Math.floor((ticks % beatT) / STEP16) + 1
   return `${bar}.${beat}.${six}`
 }

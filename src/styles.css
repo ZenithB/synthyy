@@ -742,3 +742,13 @@ body.drag-audio::after {
 /* disabled knob (e.g. Decay on a sampled drum pad) */
 .knob.disabled { opacity: 0.32; }
 .knob.disabled svg { cursor: default; }
+
+/* ---------------- time signature control ---------------- */
+.meter-ctl { display: flex; flex-direction: column; gap: 0; }
+.meter-num { font-size: 10px; line-height: 1.05; padding: 0 5px; color: var(--text); background: none; border: none; border-radius: 3px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.meter-num:hover { background: var(--bg3); color: var(--accent); }
+.meter-num:first-child { border-bottom: 1px solid var(--border); border-radius: 3px 3px 0 0; }
+
+/* collapsible sub-groups inside browser sections */
+.bcat-toggle { display: flex; align-items: center; gap: 3px; width: 100%; background: none; border: none; cursor: pointer; text-align: left; }
+.bcat-toggle:hover { color: var(--text); }

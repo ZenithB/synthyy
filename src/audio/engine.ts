@@ -11,7 +11,7 @@ import { BAR, STEP16, Note, clamp } from '../types'
 import {
   meta, tracks, clips, arr, clipKey, notesOf, addNote, updateNotes,
   createClip, trackById, returns, ensureReturns, midifxOf, envKeys, envPoints, followOf, scenes, sceneIndex,
-  isAudioClip, masterFx, masterAuto,
+  isAudioClip, masterFx, masterAuto, barTicks, beatTicks, timeSig,
 } from '../state/doc'
 import { makeInstrument, makeEffect, Inst, Fx } from './devices'
 import { instSchema, fxSchema, lfoShapeValue, LFO_DIV_TICKS, LFO_PARAMS, mixSpec, midiFxSchema, valueFromSpec, ParamSpec } from './schema'
@@ -84,6 +84,7 @@ class Engine {
   // average smooths away. See public/sf-load-worklet.js.
   audioProbe = { supported: false, hasClock: false, rtf: 1, minRtf: 1, glitches: 0, maxGapMs: 0 }
   private metro!: Tone.Synth
+  private metroRepeatId: number | null = null
   private rebuildTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private fxRebuildTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private audioWatchdog: ReturnType<typeof setInterval> | null = null
@@ -483,15 +484,8 @@ class Engine {
       oscillator: { type: 'sine' },
       envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.01 },
     }).connect(this.master)
-    t.scheduleRepeat(time => {
-      if (!ui.metronome) return
-      // getTicksAtTime returns fractional ticks; round to the nearest beat so the
-      // downbeat (every 4th beat = bar start) reliably accents instead of drifting
-      // off the exact tick after the first hit.
-      const beat = Math.round(t.getTicksAtTime(time) / (BAR / 4))
-      const accent = (((beat % 4) + 4) % 4) === 0
-      this.metro.triggerAttackRelease(accent ? 1760 : 1175, 0.03, time, accent ? 0.5 : 0.25)
-    }, '4n')
+    this.scheduleMetronome()
+    t.timeSignature = [timeSig().top, timeSig().bottom]
 
     await this.ensureMbWorklet()
     this.buildAll()
@@ -1341,6 +1335,11 @@ class Engine {
         this.resolveCache.delete('master|mix||gain')   // automation base changed
       }
       else if (key === 'loopOn' || key === 'loopStart' || key === 'loopEnd') this.applyLoopRegion()
+      else if (key === 'tsTop' || key === 'tsBottom') {
+        // meter change: re-accent the metronome and tell Tone's transport
+        t.timeSignature = [timeSig().top, timeSig().bottom]
+        this.scheduleMetronome()
+      }
     })
   }
 
@@ -1594,6 +1593,26 @@ class Engine {
   }
 
   /**
+   * The metronome ticks at the meter's counted note value (the bottom numeral)
+   * and accents beat 1 of every bar — re-scheduled whenever the time signature
+   * changes so 7/8 accents every 7 eighths, 3/4 every 3 quarters, etc.
+   */
+  private scheduleMetronome() {
+    const t = this.transport
+    if (this.metroRepeatId !== null) { try { t.clear(this.metroRepeatId) } catch { /* ok */ } }
+    const bt = beatTicks()
+    const bar = barTicks()
+    this.metroRepeatId = t.scheduleRepeat(time => {
+      if (!ui.metronome) return
+      // getTicksAtTime returns fractional ticks; round to the nearest beat so
+      // the bar-start accent reliably lands instead of drifting off the tick.
+      const beat = Math.round(t.getTicksAtTime(time) / bt)
+      const accent = ((beat * bt) % bar + bar) % bar === 0
+      this.metro.triggerAttackRelease(accent ? 1760 : 1175, 0.03, time, accent ? 0.5 : 0.25)
+    }, `${bt}i`)
+  }
+
+  /**
    * Next launch boundary as a TRANSPORT TICK position. Everything is scheduled
    * in ticks ("Ni" notation) — never wall-clock seconds — because the audio
    * context clock and the transport timeline drift apart over a session, and
@@ -1603,7 +1622,7 @@ class Engine {
     const q = meta.get('launchQ') ?? 1
     const cur = Math.round(this.transport.ticks)
     if (q === 0) return cur + 4 // tiny lookahead ≈ immediate
-    const qTicks = q * BAR
+    const qTicks = q * barTicks()   // quantize follows the current meter's bar
     return Math.ceil((cur + 1) / qTicks) * qTicks
   }
 

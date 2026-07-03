@@ -9,6 +9,7 @@ import {
   tracks, arr, meta, addArrClip, moveArrClip, resizeArrClip, deleteArrClip,
   duplicateArrClip, setClipField, setLoopRegion, arrEndTicks, setTrackMix, clipToJSON,
   clips, clipKey, setAutoOpen, setAutoParam, renameTrack, setMetaField, trackAutoKeys, masterAuto,
+  barTicks, beatTicks,
 } from '../state/doc'
 import { autoTargets } from '../audio/params'
 import { AutomationLane } from './AutomationLane'
@@ -82,7 +83,9 @@ export function ArrangementView() {
   useY(masterAuto)   // master-bus automation lives outside `tracks`; observe it for the dot + lane
   const zoom = useUI(s => s.zoomPxPerBar)
   const uiZoom = useUI(s => s.uiZoom)
-  const pxPerTick = zoom / BAR
+  // zoom stays "pixels per bar", so a bar keeps its width under any meter
+  const barT = barTicks()
+  const pxPerTick = zoom / barT
   // CSS UI-zoom factor: client coords are visual, the timeline lays out in
   // layout px — divide by this to map clicks/drags to ticks.
   const z = uiZoom || 1
@@ -113,7 +116,7 @@ export function ArrangementView() {
   ]
   const nClipRows = instrTracks.length
   const laneOf = (tid: string) => rows.findIndex(r => r.id === tid)
-  const totalBars = Math.max(33, Math.ceil(arrEndTicks() / BAR) + 9)
+  const totalBars = Math.max(33, Math.ceil(arrEndTicks() / barT) + 9)
   const width = totalBars * zoom
 
   // Vertical row layout: each row is one band (LANE_H); if its automation lane
@@ -141,7 +144,7 @@ export function ArrangementView() {
   const loopEnd = meta.get('loopEnd') ?? BAR * 4
 
   const snap = (t: number, fine: boolean) => {
-    const g = fine ? ui.gridTicks : BAR
+    const g = fine ? ui.gridTicks : barT
     return Math.round(t / g) * g
   }
 
@@ -211,8 +214,8 @@ export function ArrangementView() {
       const dt = (e.clientX - drag.startX) / z / pxPerTick
       let s = drag.origStart
       let en = drag.origEnd
-      if (drag.edge === 'start') s = clamp(snap(drag.origStart + dt, e.shiftKey), 0, en - BAR)
-      else if (drag.edge === 'end') en = Math.max(s + BAR, snap(drag.origEnd + dt, e.shiftKey))
+      if (drag.edge === 'start') s = clamp(snap(drag.origStart + dt, e.shiftKey), 0, en - barT)
+      else if (drag.edge === 'end') en = Math.max(s + barT, snap(drag.origEnd + dt, e.shiftKey))
       else { const d = snap(dt, e.shiftKey); s = Math.max(0, drag.origStart + d); en = drag.origEnd + (s - drag.origStart) }
       setDrag({ ...drag, cur: [s, en] })
     }
@@ -333,7 +336,7 @@ export function ArrangementView() {
             data-info="Toggle loop region (playback loops between the braces)"
             onClick={() => setLoopRegion(loopStart, loopEnd, !loopOn)}
           >LOOP</button>
-          <span className="arr-pos">{ticksToBBS(Math.round(engine.arrSeekTicks))}</span>
+          <span className="arr-pos">{ticksToBBS(Math.round(engine.arrSeekTicks), barT, beatTicks())}</span>
         </div>
         <div className="arr-heads-inner" ref={headsRef}>
           {rows.map(r => {
@@ -434,7 +437,7 @@ export function ArrangementView() {
               const row = rows[idx]
               if (!row || !row.clips) return   // buses + master hold no clips
               const t = snap((e.clientX - rect.left) / z / pxPerTick, false)
-              const id = addArrClip(row.id, Math.max(0, t), { name: 'Clip', color: row.color, len: BAR * 4, notes: {} })
+              const id = addArrClip(row.id, Math.max(0, t), { name: 'Clip', color: row.color, len: barT * 4, notes: {} })
               selectClip({ kind: 'arr', id }, true)
             }}
             onContextMenu={e => {

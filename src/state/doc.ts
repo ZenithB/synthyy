@@ -5,7 +5,7 @@
 import * as Y from 'yjs'
 import { IndexeddbPersistence } from 'y-indexeddb'
 import { nanoid } from 'nanoid'
-import { BAR, CLIP_COLORS, Note, ClipRef, TrackKind } from '../types'
+import { BAR, PPQ, CLIP_COLORS, Note, ClipRef, TrackKind } from '../types'
 
 export const LOCAL = { local: true }
 
@@ -84,7 +84,7 @@ export type TrackJSON = {
   autoOpen?: boolean; autoParam?: string
 }
 export type ProjectJSON = {
-  meta: { title: string; bpm: number; swing: number; swingSubdivision?: string; humanize?: number; root: number; scale: string; launchQ: number; masterGain?: number; loopOn?: boolean; loopStart?: number; loopEnd?: number; masterAutoOpen?: boolean; masterAutoParam?: string }
+  meta: { title: string; bpm: number; swing: number; swingSubdivision?: string; humanize?: number; root: number; scale: string; launchQ: number; masterGain?: number; loopOn?: boolean; loopStart?: number; loopEnd?: number; masterAutoOpen?: boolean; masterAutoParam?: string; tsTop?: number; tsBottom?: number }
   tracks: TrackJSON[]
   scenes: { id?: string; name: string }[]
   clips: Record<string, ClipJSON>
@@ -308,6 +308,37 @@ export const setTitle = (v: string) => setMetaField('Rename project', 'title', v
 export const setLaunchQ = (bars: number) => setMetaField('Launch quantize', 'launchQ', bars)
 export function setKeyScale(root: number, scale: string) {
   mutate('Change key', () => { meta.set('root', root); meta.set('scale', scale) })
+}
+
+// ---------- meter (time signature) ----------
+// Stored on shared meta as tsTop/tsBottom (default 4/4). PPQ stays the quarter
+// note; the bottom numeral picks the counted note value (2=half … 16=16th) and
+// the top numeral how many of them make a bar. All positions/lengths remain
+// plain ticks — the meter only changes how ticks group into beats and bars
+// (grids, ruler, metronome, launch quantize, bar-based lengths).
+export const TS_TOP_MAX = 30
+export const TS_BOTTOMS = [2, 4, 8, 16]
+export function timeSig(): { top: number; bottom: number } {
+  const top = clampInt(meta.get('tsTop') ?? 4, 1, TS_TOP_MAX)
+  const b = meta.get('tsBottom') ?? 4
+  const bottom = TS_BOTTOMS.includes(b) ? b : 4
+  return { top, bottom }
+}
+const clampInt = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)))
+/** Ticks in one beat (the bottom-numeral note value). PPQ=96 ⇒ ♩=96, ♪=48… */
+export function beatTicks(): number {
+  return (PPQ * 4) / timeSig().bottom
+}
+/** Ticks in one bar under the current meter (4/4 ⇒ 384 = the legacy BAR). */
+export function barTicks(): number {
+  const { top, bottom } = timeSig()
+  return top * ((PPQ * 4) / bottom)
+}
+export function setTimeSignature(top: number, bottom: number) {
+  mutate('Time signature', () => {
+    meta.set('tsTop', clampInt(top, 1, TS_TOP_MAX))
+    meta.set('tsBottom', TS_BOTTOMS.includes(bottom) ? bottom : 4)
+  })
 }
 export function setLoopRegion(start: number, end: number, on: boolean) {
   mutate('Loop region', () => { meta.set('loopStart', start); meta.set('loopEnd', end); meta.set('loopOn', on) })
@@ -1045,7 +1076,7 @@ export function createClip(trackId: string, sceneId: string, json?: ClipJSON): C
   const base: ClipJSON = json ?? {
     name: `${t?.get('name') ?? 'Clip'} ${sIdx + 1}`,
     color: t?.get('color') ?? 0,
-    len: BAR,
+    len: barTicks(),   // one bar of the CURRENT meter
     notes: {},
   }
   mutate(json ? 'Paste clip' : 'Create clip', () => {
@@ -1227,6 +1258,7 @@ export function exportProject(): ProjectJSON {
       launchQ: meta.get('launchQ') ?? 1,
       masterGain: meta.get('masterGain') ?? 0,
       loopOn: !!meta.get('loopOn'), loopStart: meta.get('loopStart') ?? 0, loopEnd: meta.get('loopEnd') ?? BAR * 4,
+      tsTop: meta.get('tsTop') ?? 4, tsBottom: meta.get('tsBottom') ?? 4,
       ...(meta.get('masterAutoOpen') ? { masterAutoOpen: true } : {}),
       ...(meta.get('masterAutoParam') ? { masterAutoParam: meta.get('masterAutoParam') } : {}),
     },
