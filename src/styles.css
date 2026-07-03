@@ -775,3 +775,13 @@ body.drag-audio::after {
 .arr-marker-name { pointer-events: none; }
 .arr-timesel-seg { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 30%, transparent); pointer-events: none; }
 .arr-timesel-band { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 10%, transparent); border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); z-index: 3; pointer-events: none; }
+
+/* ---------------- track drag-reorder (arrange rows + session columns) ---------------- */
+.arr-heads-inner { position: relative; }
+.arr-drop-line { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid var(--accent); z-index: 7; pointer-events: none; box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
+.arr-drop-line.lanes { right: auto; width: 100%; }
+.arr-head.dragging { opacity: 0.45; }
+.session-scroll { position: relative; }
+.session-drop-line { position: absolute; top: 10px; bottom: 10px; width: 0; border-left: 2px solid var(--accent); z-index: 7; pointer-events: none; box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
+.track-head.dragging { opacity: 0.45; }
+.track-col:has(.track-head.dragging) .slots { opacity: 0.45; }

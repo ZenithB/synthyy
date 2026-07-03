@@ -408,6 +408,25 @@ export function moveTrack(trackId: string, dir: -1 | 1) {
   })
 }
 
+/** Drag-reorder: place `trackId` just before `beforeId` (null = end of the list).
+ *  Display order groups instrument tracks before buses, so a drop at the end of
+ *  either group maps to the array end — filtering preserves relative order. */
+export function moveTrackBefore(trackId: string, beforeId: string | null) {
+  if (trackById(trackId)?.get('locked')) return   // pinned A/B buses don't reorder
+  const i = trackIndex(trackId)
+  if (i < 0 || trackId === beforeId) return
+  const target = beforeId == null ? tracks.length : trackIndex(beforeId)
+  if (target < 0) return
+  const j = target > i ? target - 1 : target      // insertion index once removed
+  if (j === i) return
+  mutate('Move track', () => {
+    // Same full-deep-copy dance as moveTrack: Y arrays can't move in place.
+    const fresh = yTrack(tracks.get(i).toJSON() as TrackJSON)
+    tracks.delete(i)
+    tracks.insert(j, [fresh])
+  })
+}
+
 export function setTrackMix(trackId: string, patch: Partial<{ gain: number; pan: number; mute: boolean; solo: boolean }>) {
   mutate('Mixer', () => {
     const t = trackById(trackId)

@@ -1,12 +1,12 @@
 // The Session View: tracks as columns, scenes as rows, launchable clips with
 // quantized triggering — Ableton's signature surface.
 
-import React, { useState, useSyncExternalStore } from 'react'
+import React, { useRef, useState, useSyncExternalStore } from 'react'
 import * as Y from 'yjs'
 import { CLIP_COLORS } from '../types'
 import {
   tracks, scenes, clips, clipKey, createClip, deleteClipAt, duplicateClipTo,
-  renameTrack, setTrackMix,
+  renameTrack, setTrackMix, moveTrackBefore,
   addScene, removeScene, renameScene, duplicateScene, sendClipToArr, sendSceneToArr,
   setMetaField, meta, setClipField, trackById, moveArrClip, busList,
 } from '../state/doc'
@@ -233,7 +233,10 @@ function ClipSlot({ track, sceneId }: { track: Y.Map<any>; sceneId: string }) {
   )
 }
 
-function TrackHeader({ track }: { track: Y.Map<any> }) {
+// swallow the click that trails a completed column-reorder drag (it would open devices)
+let colClickGuard = false
+
+function TrackHeader({ track, onReorder, dragging }: { track: Y.Map<any>; onReorder?: (e: React.PointerEvent) => void; dragging?: boolean }) {
   const trackId = track.get('id') as string
   const isArmed = useUI(s => s.armTrackId === trackId)
   const isSel = useUI(s => s.selTrackId === trackId)
@@ -245,9 +248,10 @@ function TrackHeader({ track }: { track: Y.Map<any> }) {
 
   return (
     <div
-      className={`track-head ${isSel ? 'selected' : ''}`}
+      className={`track-head ${isSel ? 'selected' : ''} ${dragging ? 'dragging' : ''}`}
       style={{ borderTopColor: color }}
-      onClick={() => { selectTrack(trackId); setUI({ detailOpen: true, detailTab: 'devices' }) }}
+      onClick={() => { if (colClickGuard) return; selectTrack(trackId); setUI({ detailOpen: true, detailTab: 'devices' }) }}
+      onPointerDown={onReorder}
       onContextMenu={e => openMenu(e, menu)}
       onDragOver={e => e.preventDefault()}
       onDrop={e => {
@@ -339,12 +343,58 @@ export function SessionView() {
   const all = tracks.toArray()
   const instr = all.filter(t => t.get('kind') !== 'bus')
   const buses = all.filter(t => t.get('kind') === 'bus')   // bus tracks group on the right, beside master
+
+  // ---- drag a track header left/right to reorder columns ----
+  // A vertical preview line marks the drop slot; the move commits on release.
+  // Columns reorder only within their display group (instruments / buses).
+  const scrollInnerRef = useRef<HTMLDivElement>(null)
+  const [colDrag, setColDrag] = useState<{ tid: string; x: number } | null>(null)
+  const beginColDrag = (e: React.PointerEvent, tid: string, isBus: boolean) => {
+    if (e.button !== 0) return
+    // interactive children (arm/M/S, fader, pan, bus output…) keep their gestures
+    if ((e.target as HTMLElement).closest('button, input, select, .knob, .fader, .hfader, .bus-out')) return
+    if (trackById(tid)?.get('locked')) return
+    const cont = scrollInnerRef.current
+    if (!cont) return
+    const z = ui.uiZoom || 1
+    const startX = e.clientX, startY = e.clientY
+    let active = false
+    let before: string | null = tid   // current drop target (== tid ⇒ no-op)
+    const move = (ev: PointerEvent) => {
+      if (!active && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 5) return
+      active = true
+      const cols = Array.from(cont.querySelectorAll<HTMLElement>(`.track-col[data-kind="${isBus ? 'bus' : 'instr'}"]`))
+      if (cols.length < 2) return
+      // drop slots: the left edge of each group member, plus the group's right end
+      const slots = cols.map(c => ({ x: c.getBoundingClientRect().left, before: c.dataset.tid as string | null }))
+      slots.push({ x: cols[cols.length - 1].getBoundingClientRect().right, before: null })
+      let best = slots[0]
+      for (const s of slots) if (Math.abs(s.x - ev.clientX) < Math.abs(best.x - ev.clientX)) best = s
+      before = best.before
+      setColDrag({ tid, x: (best.x - cont.getBoundingClientRect().left) / z })
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      setColDrag(null)
+      if (active) {
+        colClickGuard = true
+        setTimeout(() => { colClickGuard = false }, 150)
+        moveTrackBefore(tid, before)
+      }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
   // `push` makes a column the leader of the right-aligned group (margin-left:auto)
   const trackCol = (t: Y.Map<any>, push = false) => {
     const isBus = t.get('kind') === 'bus'
+    const tid = t.get('id') as string
     return (
-      <div className={`track-col ${isBus ? 'bus-col' : ''} ${push ? 'push' : ''}`} key={t.get('id')}>
-        <TrackHeader track={t} />
+      <div className={`track-col ${isBus ? 'bus-col' : ''} ${push ? 'push' : ''}`} key={tid} data-tid={tid} data-kind={isBus ? 'bus' : 'instr'}>
+        <TrackHeader track={t} dragging={colDrag?.tid === tid}
+          onReorder={e => beginColDrag(e, tid, isBus)} />
         {isBus
           ? <div className="slots bus-slots" data-info="Buses carry audio from sends — they hold no clips" />
           : <>
@@ -361,7 +411,8 @@ export function SessionView() {
 
   return (
     <div className="session" onClick={e => { if (e.target === e.currentTarget) selectClip(null) }}>
-      <div className="session-scroll">
+      <div className="session-scroll" ref={scrollInnerRef}>
+        {colDrag && <div className="session-drop-line" style={{ left: colDrag.x }} />}
         {instr.map(t => trackCol(t))}
 
         <div className="track-col add-col">

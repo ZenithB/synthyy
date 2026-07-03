@@ -10,7 +10,7 @@ import {
   duplicateArrClip, setClipField, setLoopRegion, arrEndTicks, setTrackMix, clipToJSON,
   clips, clipKey, setAutoOpen, setAutoParam, renameTrack, setMetaField, trackAutoKeys, masterAuto,
   barTicks, beatTicks, isAudioClip, notesOf, setAudioField, mutate,
-  markersList, addMarker, updateMarker, removeMarker,
+  markersList, addMarker, updateMarker, removeMarker, moveTrackBefore, trackById,
 } from '../state/doc'
 import { getSampleBuffer } from '../audio/samples'
 import { autoTargets } from '../audio/params'
@@ -258,6 +258,13 @@ export function ArrangementView() {
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (headsRef.current) headsRef.current.style.transform = `translateY(${-e.currentTarget.scrollTop}px)`
   }
+  // Wheel over the (non-scrolling) heads column drives the timeline scroller,
+  // so vertical scrolling works wherever the pointer is.
+  const onHeadsWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) return   // zoom — handled by the .arrange wheel handler
+    const sc = scrollRef.current
+    if (sc) { sc.scrollTop += e.deltaY; sc.scrollLeft += e.deltaX }
+  }
 
   // Rows: clip tracks first, then bus tracks, then master. Clips live only on the
   // first `nClipRows`; buses + master are head + automation only.
@@ -316,6 +323,51 @@ export function ArrangementView() {
       e.preventDefault()
       setUI({ zoomPxPerBar: clamp(zoom * (e.deltaY > 0 ? 0.85 : 1.18), 24, 480) })
     }
+  }
+
+  // ---- drag a track head up/down to reorder ----
+  // A horizontal preview line marks the drop slot; the move commits on release.
+  // Tracks reorder only within their display group (instruments / buses).
+  const [trackDrag, setTrackDrag] = useState<{ tid: string; y: number } | null>(null)
+  const headClickGuard = useRef(false)
+  const beginTrackDrag = (e: React.PointerEvent, tid: string, kind: string) => {
+    if (e.button !== 0) return
+    // interactive children (M/S, faders, pan, automation toggle…) keep their gestures
+    if ((e.target as HTMLElement).closest('button, input, select, .knob, .hfader, .fader')) return
+    if (kind === 'master' || trackById(tid)?.get('locked')) return
+    const group = (kind === 'bus' ? busTracks : instrTracks).map(t => t.get('id') as string)
+    if (group.length < 2) return
+    // drop slots: the top edge of each group member, plus the end of the group
+    const slots = group.map(id => ({ y: trackTop[id], before: id as string | null }))
+    const last = rows.find(r => r.id === group[group.length - 1])!
+    slots.push({ y: trackTop[last.id] + LANE_H + (last.autoOpen ? LANE_H : 0), before: null })
+    const startX = e.clientX, startY = e.clientY
+    let active = false
+    let before: string | null = tid   // current drop target (== tid ⇒ no-op)
+    const move = (ev: PointerEvent) => {
+      if (!active && Math.abs(ev.clientY - startY) + Math.abs(ev.clientX - startX) < 5) return
+      active = true
+      const inner = headsRef.current
+      if (!inner) return
+      const y = (ev.clientY - inner.getBoundingClientRect().top) / z
+      let best = slots[0]
+      for (const s of slots) if (Math.abs(s.y - y) < Math.abs(best.y - y)) best = s
+      before = best.before
+      setTrackDrag({ tid, y: best.y })
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      setTrackDrag(null)
+      if (active) {
+        // swallow the click that follows this pointerup (it would open devices)
+        headClickGuard.current = true
+        setTimeout(() => { headClickGuard.current = false }, 150)
+        moveTrackBefore(tid, before)
+      }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
   }
 
   // ---- split at playhead (S) ----
@@ -624,7 +676,7 @@ export function ArrangementView() {
 
   return (
     <div className="arrange" onWheel={onWheel}>
-      <div className="arr-heads" style={{ width: HEAD_W }}>
+      <div className="arr-heads" style={{ width: HEAD_W }} onWheel={onHeadsWheel}>
         <div className="arr-corner">
           <button
             className={`tbtn ${loopOn ? 'on' : ''}`}
@@ -644,8 +696,9 @@ export function ArrangementView() {
             const autoKeys = autoOpen ? new Set(trackAutoKeys(tid)) : new Set<string>()
             return (
               <React.Fragment key={tid}>
-                <div className={`arr-head ${isMaster ? 'master' : ''} ${r.kind === 'bus' ? 'bus' : ''}`} style={{ height: LANE_H, borderLeftColor: borderColor }}
-                  onClick={() => { setUI({ selTrackId: tid, detailOpen: true, detailTab: 'devices' }) }}
+                <div className={`arr-head ${isMaster ? 'master' : ''} ${r.kind === 'bus' ? 'bus' : ''} ${trackDrag?.tid === tid ? 'dragging' : ''}`} style={{ height: LANE_H, borderLeftColor: borderColor }}
+                  onClick={() => { if (headClickGuard.current) return; setUI({ selTrackId: tid, detailOpen: true, detailTab: 'devices' }) }}
+                  onPointerDown={e => beginTrackDrag(e, tid, r.kind)}
                   onContextMenu={e => { if (!isMaster) openMenu(e, trackHeaderMenu(tid, () => setRenamingTid(tid), true)) }}
                   onDragOver={e => { if (r.clips) e.preventDefault() }}
                   onDrop={e => { if (!r.clips) return; const dk = e.dataTransfer.getData('stg/drumkit'); if (dk) assignKitToTrack(tid, dk) }}
@@ -691,6 +744,7 @@ export function ArrangementView() {
               </React.Fragment>
             )
           })}
+          {trackDrag && <div className="arr-drop-line" style={{ top: trackDrag.y }} />}
         </div>
       </div>
 
@@ -894,6 +948,7 @@ export function ArrangementView() {
                 : timeSel
               return ts && <div className="arr-timesel-band" style={{ left: ts[0] * pxPerTick, width: Math.max(1, (ts[1] - ts[0]) * pxPerTick) }} />
             })()}
+            {trackDrag && <div className="arr-drop-line lanes" style={{ top: trackDrag.y }} />}
             <Playhead pxPerTick={pxPerTick} />
             <GhostPlayheads pxPerTick={pxPerTick} />
           </div>
