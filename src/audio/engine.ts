@@ -41,6 +41,7 @@ type BuiltTrack = {
   busSends: Map<string, Tone.Gain>     // per-bus send gains: busTrackId → gain (vol → gain → bus input)
   part: Tone.Part | null
   player: Tone.Player | null
+  clipRepeat: number | null            // transport repeat id re-firing a non-looping session audio clip each scene loop
   partKey: string | null
   partStartTicks: number
   partLoopTicks: number
@@ -904,7 +905,7 @@ class Engine {
       id: tid, kind: t.get('kind'), inst, instOut, instMeter, fx, panner, vol, meter, sendA, sendB,
       muted: false,
       outNode: isBus ? null : this.master, busSends: new Map(),
-      part: null, player: null, partKey: null, partStartTicks: 0, partLoopTicks: BAR,
+      part: null, player: null, clipRepeat: null, partKey: null, partStartTicks: 0, partLoopTicks: BAR,
       queuedKey: null, queuedPart: null, unobserve: null,
     }
     this.built.set(tid, rec)
@@ -1470,6 +1471,7 @@ class Engine {
     if (rec.part) {
       try { rec.part.stop(); rec.part.dispose() } catch { /* ok */ }
     }
+    this.clearClipRepeat(rec)
     if (rec.player) {
       try { rec.player.stop(); rec.player.unsync(); rec.player.dispose() } catch { /* ok */ }
       rec.player = null
@@ -1497,15 +1499,57 @@ class Engine {
     return player
   }
 
+  /** Create + start a session audio-clip player, anchored at `atTicks`.
+   *  loop enabled  → synced, loops the sample continuously for the whole run.
+   *  loop disabled → a one-shot re-fired at every scene-clip-length boundary,
+   *  so the clip re-triggers each time its parent scene loops around (rather
+   *  than playing once and going silent). Sets rec.player (+ rec.clipRepeat). */
+  private startSessionPlayer(rec: BuiltTrack, clipMap: Y.Map<any>, atTicks: number): Tone.Player {
+    const player = this.makePlayer(rec, clipMap)
+    if (clipMap.get('loop')) {
+      try { player.sync().start(`${atTicks}i`) } catch { try { player.start() } catch { /* ok */ } }
+    } else {
+      const len = clipMap.get('len') ?? BAR
+      // unsynced: the transport repeat is the clock — stop+start re-fires the
+      // one-shot from its head at each boundary (proven click-free; cuts off a
+      // still-playing take if the sample is longer than the scene length).
+      rec.clipRepeat = this.transport.scheduleRepeat((time) => {
+        try { player.stop(time); player.start(time) } catch { /* ok */ }
+      }, `${len}i`, `${atTicks}i`)
+    }
+    rec.player = player
+    return player
+  }
+
+  private clearClipRepeat(rec: BuiltTrack) {
+    if (rec.clipRepeat !== null) { try { this.transport.clear(rec.clipRepeat) } catch { /* ok */ } rec.clipRepeat = null }
+  }
+
   private observeAudioClip(rec: BuiltTrack, key: string, clipMap: Y.Map<any>) {
     const h = () => {
       this.clipEnvCache.delete(clipMap)
       if (rec.partKey !== key || !rec.player) return
+      // Toggling Loop flips between "continuous synced loop" and "re-fire each
+      // scene loop" — a structural change in how the player is driven, so
+      // re-arm the clip rather than morphing a running player between modes.
+      // Deferred out of the Yjs observer (re-check still-active + still-changed)
+      // so we never re-enter the audio graph mid-transaction.
+      const wantLoop = !!clipMap.get('loop')
+      const isOneShot = rec.clipRepeat !== null
+      if (wantLoop === isOneShot) {
+        const tid = rec.id, sid = key.split('|')[1]
+        setTimeout(() => {
+          const r = this.built.get(tid)
+          const c = clips.get(key) as Y.Map<any> | undefined
+          if (!r || r.partKey !== key || !r.player || !c) return
+          if ((!!c.get('loop')) === (r.clipRepeat !== null)) this.launchAudioClip(tid, sid, key)
+        }, 60)
+        return
+      }
       const p = rec.player
       try {
         p.volume.rampTo(clipMap.get('gainDb') ?? 0, 0.03)
         p.playbackRate = audioRate(clipMap.get('pitch') ?? 0, clipMap.get('cents') ?? 0)
-        p.loop = !!clipMap.get('loop')
       } catch { /* ok */ }
     }
     clipMap.observeDeep(h)
@@ -1524,11 +1568,10 @@ class Engine {
     if (rec.part) { try { rec.part.stop(); rec.part.dispose() } catch { /* ok */ } rec.part = null }
     rec.unobserve?.(); rec.unobserve = null
     const oldPlayer = rec.player
+    this.clearClipRepeat(rec)   // stop the previous clip's re-fire clock (if any)
     if (!started) { this.transport.ticks = 0 as any; this.transport.start('+0.05'); this.resumeArmed(trackId) }
-    const player = this.makePlayer(rec, clipMap)
-    try { player.sync().start(atT) } catch { try { player.start() } catch { /* ok */ } }
+    this.startSessionPlayer(rec, clipMap, atTicks)
     if (oldPlayer) { try { oldPlayer.stop(atT) } catch { /* ok */ } setTimeout(() => { try { oldPlayer.unsync(); oldPlayer.dispose() } catch { /* ok */ } }, 900) }
-    rec.player = player
     rec.partKey = key
     rec.partStartTicks = atTicks
     rec.partLoopTicks = clipMap.get('len') ?? BAR
@@ -1719,6 +1762,7 @@ class Engine {
     if (rec.player && !rec.part) {
       const atT = `${this.nextBoundaryTicks()}i`
       const p = rec.player
+      this.clearClipRepeat(rec)   // stop the one-shot re-fire clock
       rec.player = null; rec.partKey = null
       rec.unobserve?.(); rec.unobserve = null
       this.clearFollow(trackId)
@@ -1877,9 +1921,7 @@ class Engine {
     this.stopTrackNow(rec)   // clear the paused marker + any stale nodes
     this.clipEnvCache.delete(clipMap)
     if (isAudioClip(clipMap)) {
-      const player = this.makePlayer(rec, clipMap)
-      try { player.sync().start('0i') } catch { try { player.start() } catch { /* ok */ } }
-      rec.player = player
+      this.startSessionPlayer(rec, clipMap, 0)
       rec.partKey = key
       rec.partStartTicks = 0
       rec.partLoopTicks = clipMap.get('len') ?? BAR
