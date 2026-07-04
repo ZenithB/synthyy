@@ -135,8 +135,9 @@ function DrumPackRow({ pack }: { pack: DrumPack }) {
           {roles.map(role => (
             <div key={role} className="bitem bsample" draggable
               onDragStart={e => e.dataTransfer.setData('stg/sample', `${packSampleId(pack.id, role)}::${pack.name} ${ROLE_LABEL[role]}`)}
+              onMouseEnter={() => engine.preloadSample(packSampleId(pack.id, role))}
               onClick={() => engine.auditionSample(packSampleId(pack.id, role))}
-              data-info="Click to audition · drag onto the arrangement timeline (audio clip) or onto a drum device pad">
+              data-info="Click to audition (click again to stop) · drag onto the arrangement timeline (audio clip) or onto a drum device pad">
               <span className="bitem-icon"><Icon name="sampler" size={11} /></span>{ROLE_LABEL[role]}
             </div>
           ))}
@@ -185,10 +186,11 @@ function SampleRow({ s, folders }: { s: SampleMeta; folders: string[] }) {
         e.dataTransfer.setData('stg/sample', `${s.id}::${s.name}`)   // use: timeline, pads, sampler, slots
         e.dataTransfer.setData('stg/samplemove', s.id)               // organize: drop on a folder row
       }}
+      onMouseEnter={() => engine.preloadSample(s.id)}
       onClick={() => engine.auditionSample(s.id)}
       onDoubleClick={() => { setName(s.name); setRenaming(true) }}
       onContextMenu={menu}
-      data-info="Click: audition · drag onto an audio-track slot, the timeline, a drum pad or a sampler · right-click: rename / move / delete">
+      data-info="Click: audition (click again to stop) · drag onto an audio-track slot, the timeline, a drum pad or a sampler · right-click: rename / move / delete">
       <span className="bitem-icon"><Icon name="sampler" size={11} /></span>{s.name}
     </div>
   )

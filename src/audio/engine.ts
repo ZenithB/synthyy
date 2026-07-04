@@ -2233,14 +2233,41 @@ class Engine {
     setTimeout(() => { try { inst.dispose() } catch { /* ok */ } }, (chords.length * chordDur + 2) * 1000)
   }
 
-  /** Play a sample once (browser audition / preview). */
+  /** Warm a sample's decoded buffer (hover preload) so the audition click is instant. */
+  preloadSample(sampleId: string) {
+    getSampleBuffer(sampleId)   // synchronous cache hit or kicks off the IDB restore + decode
+  }
+
+  private auditionPlayer: Tone.Player | null = null
+  private auditionId: string | null = null
+  /** Stop the current sample audition (if any). */
+  stopAudition() {
+    const p = this.auditionPlayer
+    this.auditionPlayer = null
+    this.auditionId = null
+    if (p) { try { p.stop(); p.dispose() } catch { /* ok */ } }
+  }
+
+  /** Play a sample once (browser audition / preview, capped at 10s).
+   *  Clicking the sample that's already auditioning stops it instead. */
   async auditionSample(sampleId: string) {
+    if (this.auditionId === sampleId && this.auditionPlayer) { this.stopAudition(); return }
     await this.ensureStarted()
-    const buf = getSampleBuffer(sampleId)
+    // the hover preload usually decoded it already; otherwise wait briefly for
+    // the background restore getSampleBuffer() just kicked off
+    let buf = getSampleBuffer(sampleId)
+    for (let i = 0; !buf && i < 30; i++) { await new Promise(r => setTimeout(r, 100)); buf = getSampleBuffer(sampleId) }
     if (!buf) return
+    this.stopAudition()   // one audition at a time
+    const dur = Math.min(buf.duration, 10)
     const p = new Tone.Player(buf).connect(this.master)
-    p.start()
-    setTimeout(() => { try { p.dispose() } catch { /* ok */ } }, (buf.duration + 0.4) * 1000)
+    this.auditionPlayer = p
+    this.auditionId = sampleId
+    p.start(undefined, 0, dur)
+    setTimeout(() => {
+      if (this.auditionPlayer === p) { this.auditionPlayer = null; this.auditionId = null }
+      try { p.dispose() } catch { /* ok */ }
+    }, (dur + 0.4) * 1000)
   }
 
   /** Quick preset audition from the browser, without touching any track. */
