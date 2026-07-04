@@ -63,7 +63,9 @@ export type ClipJSON = {
   env?: Record<string, { t: number; v: number }[]>
   follow?: { on: boolean; bars: number; action: number; chance: number }
 }
-export type FxJSON = { id?: string; type: string; on: boolean; params: Record<string, number>; out?: number }
+// srcTrack/srcPitch: sidechain trigger source (duck fx) — track id ('' = tempo
+// mode) and pad index within a drum track (-1 = any note on the track).
+export type FxJSON = { id?: string; type: string; on: boolean; params: Record<string, number>; out?: number; srcTrack?: string; srcPitch?: number }
 export type LfoJSON = { id?: string; on: number; shape: number; sync: number; rate: number; hz: number; depth: number; phase: number; dest: string; fxId: string; pkey: string; targets?: { dest: string; fxId: string; pkey: string }[] }
 export type MacroJSON = { name: string; value: number; targets: { dest: string; fxId: string; pkey: string }[] }
 export type MidiFxJSON = { id?: string; type: string; on: boolean; params: Record<string, number> }
@@ -158,6 +160,7 @@ function yFx(fx: FxJSON) {
   m.set('type', fx.type)
   m.set('on', fx.on)
   m.set('out', fx.out ?? 0)
+  if (fx.srcTrack) { m.set('srcTrack', fx.srcTrack); m.set('srcPitch', fx.srcPitch ?? -1) }
   const pm = new Y.Map<number>()
   for (const [k, v] of Object.entries(fx.params)) pm.set(k, v)
   m.set('params', pm)
@@ -502,6 +505,19 @@ export function setFxParam(trackId: string, fxId: string, key: string, val: numb
     if (!fx) return
     const i = fxIndexIn(fx, fxId)
     if (i >= 0) (fx.get(i).get('params') as Y.Map<number>).set(key, val)
+  })
+}
+
+/** Sidechain (duck) trigger source: a track id ('' = tempo mode) and a pad
+ *  index within a drum track (-1 = any note on the track). */
+export function setDuckSource(trackId: string, fxId: string, srcTrack: string, srcPitch: number) {
+  mutate('Sidechain source', () => {
+    const fx = fxArrayFor(trackId)
+    if (!fx) return
+    const i = fxIndexIn(fx, fxId)
+    if (i < 0) return
+    fx.get(i).set('srcTrack', srcTrack)
+    fx.get(i).set('srcPitch', srcPitch)
   })
 }
 

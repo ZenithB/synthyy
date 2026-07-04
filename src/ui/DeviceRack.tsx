@@ -12,12 +12,12 @@ import {
   addMidiFx, removeMidiFx, setMidiFxParam, setMidiFxOn, midifxOf,
   ensureMacros, macrosOf, setMacroValue, addMacroTarget, removeMacroTarget, clearMacroTargets, setMacroName,
   setSamplerSample, setDrumPadSample, busList,
-  clips, clipKey, isAudioClip, masterFx,
+  clips, clipKey, isAudioClip, masterFx, tracks, setDuckSource,
 } from '../state/doc'
 import { attemptBusSend, assignKitToTrack } from './actions'
 import { useUI, toast } from '../state/store'
 import { useY, useRaf } from './hooks'
-import { Knob, openMenu, beginVDrag } from './widgets'
+import { Knob, openMenu, beginVDrag, MenuItem } from './widgets'
 import {
   INSTRUMENTS, EFFECTS, instSchema, fxSchema, defaultsFor,
   LFO_SHAPES, LFO_DIVS, LFO_PARAMS, MIDI_FX, midiFxSchema, mixSpec, fmtPct, fmtDb, ParamSpec,
@@ -580,6 +580,42 @@ function Eq7Card({ trackId, fxId, params }: { trackId: string; fxId: string; par
   )
 }
 
+// Sidechain trigger source picker: Tempo (classic beat-synced pump), any track,
+// or one specific pad of a drum track (e.g. "duck the bass from THIS kick").
+function DuckSource({ trackId, fxId, fx }: { trackId: string; fxId: string; fx: Y.Map<any> }) {
+  const src = (fx.get('srcTrack') as string) || ''
+  const pitch = (fx.get('srcPitch') as number) ?? -1
+  const srcT = src ? trackById(src) : undefined
+  const label = !src ? 'Tempo'
+    : !srcT ? 'missing track'
+    : pitch >= 0 ? `${srcT.get('name')} · ${DRUM_PADS[pitch] ?? `Pad ${pitch + 1}`}`
+    : srcT.get('name')
+  const pick = (e: React.MouseEvent) => {
+    const items: MenuItem[] = [
+      { label: (!src ? '• ' : '') + 'Tempo (pump on the beat)', fn: () => setDuckSource(trackId, fxId, '', -1) },
+      'sep',
+    ]
+    tracks.toArray().forEach(t => {
+      const tid = t.get('id') as string
+      if (t.get('kind') === 'bus' || tid === trackId) return   // buses play no notes; self-trigger is meaningless
+      const nm = t.get('name') as string
+      items.push({ label: ((src === tid && pitch < 0) ? '• ' : '') + `${nm} — any note`, fn: () => setDuckSource(trackId, fxId, tid, -1) })
+      if (t.get('kind') === 'drum') DRUM_PADS.forEach((pn, i) =>
+        items.push({ label: ((src === tid && pitch === i) ? '• ' : '') + `${nm} · ${pn} pad`, fn: () => setDuckSource(trackId, fxId, tid, i) }))
+    })
+    openMenu(e, items)
+  }
+  return (
+    <div className="duck-src">
+      <span className="duck-src-label">Trigger</span>
+      <button className={`tbtn ${src ? 'on' : ''}`} onClick={pick}
+        data-info="What fires the duck: the beat grid (Tempo), any note on a track, or one drum pad (classic kick-sidechain)">
+        {label} ▾
+      </button>
+    </div>
+  )
+}
+
 function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
   const type = fx.get('type') as string
   const fxId = fx.get('id') as string
@@ -609,6 +645,7 @@ function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
               <Knob key={spec.key} spec={spec} value={params.get(spec.key) ?? spec.def} onChange={v => setFxParam(trackId, fxId, spec.key, v)} size={38} />
             ))}
           </div>
+          {type === 'duck' && <DuckSource trackId={trackId} fxId={fxId} fx={fx} />}
           {isComp && <GrMeter trackId={trackId} fxId={fxId} />}
         </>
       )}

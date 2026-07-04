@@ -1428,6 +1428,7 @@ class Engine {
       // skip a note that can't schedule (e.g. two on the same tick restarting one
       // oscillator-based voice) rather than killing the part's callback
       try { rec.inst.trigger(ev.p, Math.max(0.02, Tone.Ticks(ev.d).toSeconds()), when, vel) } catch { /* ok */ }
+      this.fireDucks(rec.id, ev.p, when)
     }, events as any)
     part.loop = true
     part.loopStart = 0
@@ -2029,7 +2030,40 @@ class Engine {
       if (((t?.get('lfos') as Y.Array<any> | undefined)?.length ?? 0) > 0) { active = true; break }
     }
     this.modActive = active
+    this.rebuildDuckTriggers()
     this.recomputeBusIdle()
+  }
+
+  // ---- sidechain trigger routing ----
+  // Duck fx with a srcTrack field fire from that track's note events instead
+  // of the beat grid: srcTrack id → the built duck devices it should trigger
+  // (pitch −1 = any note; 0–7 = one drum pad). Rebuilt with the mod caches.
+  private duckTriggers = new Map<string, { fx: Fx; pitch: number }[]>()
+  private rebuildDuckTriggers() {
+    this.duckTriggers.clear()
+    const wire = (fxMap: Y.Map<any>, dev: Fx | undefined) => {
+      if (fxMap.get('type') !== 'duck' || !dev) return
+      const src = (fxMap.get('srcTrack') as string) || ''
+      dev.set('srcOn', src && fxMap.get('on') ? 1 : 0)
+      if (!src || !fxMap.get('on')) return
+      const entry = { fx: dev, pitch: (fxMap.get('srcPitch') as number) ?? -1 }
+      const list = this.duckTriggers.get(src)
+      if (list) list.push(entry)
+      else this.duckTriggers.set(src, [entry])
+    }
+    for (const rec of this.built.values()) {
+      const t = trackById(rec.id)
+      if (!t) continue
+      for (const bf of rec.fx) wire(this.findFxMap(t, bf.id)!, bf.fx)
+    }
+    masterFx.forEach(m => wire(m, this.builtMasterFx.find(f => f.id === m.get('id'))?.fx))
+  }
+  /** A note fired on `tid` — kick any duck listening to that track (or pad). */
+  private fireDucks(tid: string, pitch: number, when: number) {
+    const list = this.duckTriggers.get(tid)
+    if (!list) return
+    const pad = ((pitch % 8) + 8) % 8
+    for (const d of list) if (d.pitch < 0 || d.pitch === pad) d.fx.trigger?.(when)
   }
 
   // ---- idle send-bus cut ----
@@ -2111,6 +2145,7 @@ class Engine {
   previewOn(trackId: string | null, p: number, vel: number) {
     if (!this.started || !trackId) return
     this.built.get(trackId)?.inst.noteOn(p, vel)
+    this.fireDucks(trackId, p, Tone.now())
   }
 
   previewOff(trackId: string | null, p: number) {

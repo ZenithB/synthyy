@@ -59,6 +59,9 @@ export type Fx = {
   // per-band (multiband). Read each frame by the UI; absent on non-dynamics fx.
   gr?: () => number
   grBands?: () => number[]
+  // Sidechain: fire the duck envelope at `when` (audio time; defaults to now).
+  // The engine calls this from note events on the configured source track/pad.
+  trigger?: (when?: number) => void
   dispose: () => void
 }
 
@@ -1064,21 +1067,38 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'duck': {
-      // tempo-synced volume ducking ("sidechain pump"): gain dips on each beat
-      // boundary and recovers over the cycle. Driven by the engine frame tick
-      // so it stays locked to the transport with no clock drift.
+      // Volume ducking ("sidechain pump"). Two modes:
+      //  · tempo (default): gain dips on each beat boundary and recovers over
+      //    the cycle, driven by the engine frame tick — no clock drift.
+      //  · trigger: a source track (or one drum pad) fires trigger(); the dip
+      //    starts at that note's audio time and recovers over one Rate cycle.
+      // srcOn is pushed by the engine from the fx map's srcTrack field.
       const node = new Tone.Gain(1)
       let amount = p.amount, curve = p.curve, rate = p.rate | 0
+      let srcOn = 0
+      let trigAt = -1   // audio time (s) of the most recent trigger
       return {
         node,
         set: (k, v) => {
           if (k === 'amount') amount = v
           else if (k === 'curve') curve = v
           else if (k === 'rate') rate = v | 0
+          else if (k === 'srcOn') srcOn = v
         },
-        tick: posTicks => {
+        trigger: when => {
+          const at = when ?? Tone.now()
+          if (at > trigAt) trigAt = at
+        },
+        tick: (posTicks, _playing, bpm) => {
           const cyc = DUCK_DIV_TICKS[Math.max(0, Math.min(DUCK_DIV_TICKS.length - 1, rate))] || 96
-          const phase = (((posTicks % cyc) + cyc) % cyc) / cyc
+          let phase: number
+          if (srcOn) {
+            if (trigAt < 0) { node.gain.setTargetAtTime(1, Tone.now(), 0.004); return }
+            const cycSec = cyc * (60 / (Math.max(1, bpm || 120) * 96))   // ticks → seconds
+            phase = Math.min(1, Math.max(0, (Tone.now() - trigAt) / cycSec))
+          } else {
+            phase = (((posTicks % cyc) + cyc) % cyc) / cyc
+          }
           const rec = Math.pow(phase, 0.35 + curve * 1.6) // recovery shape
           const g = (1 - amount) + amount * rec
           node.gain.setTargetAtTime(Math.max(0, g), Tone.now(), 0.004)

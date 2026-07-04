@@ -11,7 +11,7 @@
 
 import * as Tone from 'tone'
 import { BAR, PPQ, Note, clamp } from '../types'
-import { exportProject, arrEndTicks, meta as docMeta, ProjectJSON, TrackJSON, ClipJSON } from '../state/doc'
+import { exportProject, arrEndTicks, meta as docMeta, ProjectJSON, TrackJSON, ClipJSON, FxJSON } from '../state/doc'
 import { makeInstrument, makeEffect, Inst, Fx } from './devices'
 import { instSchema, fxSchema, mixSpec, lfoShapeValue, LFO_DIV_TICKS, valueFromSpec } from './schema'
 import { applyMidiFx } from './midifx'
@@ -84,7 +84,7 @@ function makeOffInstrument(type: string, params: Record<string, number>, buf?: A
 
 // A device with explicit input/output nodes, so reverb (a composite) and normal
 // single-node effects share one chain-wiring path.
-type OffDevice = { in: Tone.ToneAudioNode; out: Tone.ToneAudioNode; set: (k: string, v: number) => void; tick?: Fx['tick'] }
+type OffDevice = { in: Tone.ToneAudioNode; out: Tone.ToneAudioNode; set: (k: string, v: number) => void; tick?: Fx['tick']; trigger?: Fx['trigger'] }
 
 // Tone.Reverb generates its impulse response with a NESTED Tone.Offline render,
 // which aborts inside our outer offline render. Build reverb as a Convolver fed a
@@ -112,7 +112,7 @@ function makeOffDevice(type: string, params: Record<string, number>): OffDevice 
     return { in: input, out: output, set: (k, v) => { if (k === 'mix') { wet.gain.value = v; dry.gain.value = 1 - v } } }
   }
   const fx = makeEffect(type, params)
-  return { in: fx.node, out: fx.node, set: fx.set, tick: fx.tick }
+  return { in: fx.node, out: fx.node, set: fx.set, tick: fx.tick, trigger: fx.trigger }
 }
 
 function envValueAt(pts: { t: number; v: number }[], pos: number, loop: number): number {
@@ -300,6 +300,23 @@ async function renderBuffer(
       }
     }
 
+    // sidechain trigger routing (mirrors the live engine): source track id →
+    // duck devices it fires; populated as each duck fx is built below.
+    const duckTriggers = new Map<string, { dev: OffDevice; pitch: number }[]>()
+    const wireDuck = (f: FxJSON, dev: OffDevice) => {
+      if (f.type !== 'duck' || !f.srcTrack) return
+      dev.set('srcOn', 1)
+      const list = duckTriggers.get(f.srcTrack) ?? []
+      list.push({ dev, pitch: f.srcPitch ?? -1 })
+      duckTriggers.set(f.srcTrack, list)
+    }
+    const fireDucks = (tid: string, pitch: number, when: number) => {
+      const list = duckTriggers.get(tid)
+      if (!list) return
+      const pad = ((pitch % 8) + 8) % 8
+      for (const d of list) if (d.pitch < 0 || d.pitch === pad) d.dev.trigger?.(when)
+    }
+
     // stereo-preserving master (Tone.Channel would downmix)
     const master = new Tone.Volume(project.meta.masterGain ?? 0)
     const limiter = new Tone.Limiter(-1)
@@ -315,6 +332,7 @@ async function renderBuffer(
         const out = new Tone.Volume(f.out ?? 0)
         Tone.connect(mtail, dev.in); Tone.connect(dev.out, out)
         masterOffFx.push(dev)
+        wireDuck(f, dev)
         mtail = out
       })
     }
@@ -347,6 +365,7 @@ async function renderBuffer(
       const toMaster = target.kind === 'mix' || target.kind === 'track'
       const ot = buildOffTrack(t, master, returnInputs, toMaster, legacyAB)
       offTracks.push(ot)
+      t.fx.forEach(f => { if (f.on) { const bf = ot.fx.find(x => x.id === (f.id || f.type)); if (bf) wireDuck(f, bf.dev) } })
 
       const isDrum = t.kind === 'drum'
       const midifx = (t.midifx ?? []).map(d => ({ type: d.type, on: d.on, params: d.params }))
@@ -380,6 +399,7 @@ async function renderBuffer(
           // → "Start time must be strictly greater than previous start time", which
           // aborts the bounce. Skip the duplicate (inaudible anyway on a mono voice).
           try { ot.inst.trigger(ev.p, Math.max(0.02, Tone.Ticks(ev.d).toSeconds()), time, ev.v) } catch { /* ok */ }
+          fireDucks(tid, ev.p, time)
         }, events as any)
         part.loop = true
         part.loopStart = 0

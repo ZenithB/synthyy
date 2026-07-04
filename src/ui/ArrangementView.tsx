@@ -19,7 +19,7 @@ import { engine } from '../audio/engine'
 import { setUI, ui, useUI, toast } from '../state/store'
 import { useY, useRaf } from './hooks'
 import { openMenu, ColorRow, MenuItem, capturePointer, Knob, HFader, InlineRename, beginVDrag } from './widgets'
-import { selectClip, trackHeaderMenu, assignKitToTrack, addSampleToArr, copyArrSelection, hasArrClipboard, pasteArrClipboard, splitArrClipAt } from './actions'
+import { selectClip, trackHeaderMenu, assignKitToTrack, addSampleToArr, copyArrSelection, hasArrClipboard, pasteArrClipboard, splitArrClipAt, addSynthTrack, addDrumTrack, addAudio, addBus } from './actions'
 import { Icon } from './icons'
 import { peersList, subscribeAwareness, awarenessVersion } from '../state/net'
 import { MIDI_LOOPS, PROGRESSIONS, progressionClip, clipInKey } from '../packs'
@@ -745,6 +745,12 @@ export function ArrangementView() {
             )
           })}
           {trackDrag && <div className="arr-drop-line" style={{ top: trackDrag.y }} />}
+          <div className="arr-add-tracks">
+            <button className="add-btn" onClick={() => addSynthTrack()} data-info="Add a synth track">＋ Synth</button>
+            <button className="add-btn" onClick={() => addDrumTrack()} data-info="Add a drum track">＋ Drums</button>
+            <button className="add-btn" onClick={() => addAudio()} data-info="Add a blank audio track (import or record audio clips)">＋ Audio</button>
+            <button className="add-btn" onClick={() => addBus()} data-info="Add a bus — an fx-only track that other tracks send to">＋ Bus</button>
+          </div>
         </div>
       </div>
 
@@ -845,7 +851,7 @@ export function ArrangementView() {
           <div
             className="arr-lanes"
             ref={lanesRef}
-            style={{ height: lanesHeight }}
+            style={{ height: lanesHeight + 44 }}  /* + the heads column's add-track row */
             onPointerDown={beginMarquee}
             onDoubleClick={e => {
               const rect = e.currentTarget.getBoundingClientRect()
