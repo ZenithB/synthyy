@@ -62,6 +62,7 @@ function targetRange(track: Y.Map<any>, dest: string, fxId: string, pkey: string
   let spec
   if (dest === 'inst') spec = instSchema(track.get('inst').get('type')).params.find(s => s.key === pkey)
   else if (dest === 'mix') spec = mixSpec(pkey)
+  else if (dest === 'send') return [0, 1]         // A/B send level
   else if (dest === 'lfo') spec = LFO_PARAMS[2]   // another LFO's rate (Hz)
   else {
     const fxArr = track.get('fx') as Y.Array<Y.Map<any>>
@@ -70,8 +71,9 @@ function targetRange(track: Y.Map<any>, dest: string, fxId: string, pkey: string
   return spec ? [spec.min, spec.max] : [0, 1]
 }
 
-// All continuous (non-enum) parameters on a track that an LFO can modulate.
-type ModTarget = { dest: 'inst' | 'fx' | 'lfo'; fxId: string; pkey: string; label: string }
+// All continuous (non-enum) parameters on a track that an LFO or macro can
+// modulate — instrument params, effect params, and the A/B send levels.
+type ModTarget = { dest: 'inst' | 'fx' | 'lfo' | 'send' | 'macro'; fxId: string; pkey: string; label: string }
 function modTargets(track: Y.Map<any>): ModTarget[] {
   const out: ModTarget[] = []
   const instSch = instSchema(track.get('inst').get('type'))
@@ -82,6 +84,8 @@ function modTargets(track: Y.Map<any>): ModTarget[] {
     sch.params.filter(p => !p.steps).forEach(p =>
       out.push({ dest: 'fx', fxId: f.get('id'), pkey: p.key, label: `${sch.label} · ${p.label}` }))
   })
+  out.push({ dest: 'send', fxId: '', pkey: 'A', label: 'Mix · Send A' })
+  out.push({ dest: 'send', fxId: '', pkey: 'B', label: 'Mix · Send B' })
   return out
 }
 const targetVal = (t: ModTarget) => `${t.dest}|${t.fxId}|${t.pkey}`
@@ -106,7 +110,11 @@ function LfoCard({ trackId, track, lfo }: { trackId: string; track: Y.Map<any>; 
     .map((l, i) => ({ lid: l.get('id') as string, i }))
     .filter(x => x.lid !== id)
     .map(x => ({ dest: 'lfo', fxId: x.lid, pkey: 'hz', label: `LFO ${x.i + 1} · Rate` }))
-  const allTargets = [...targets, ...lfoRateTargets]
+  // ...and any macro knob's VALUE (pkey = macro index) — the LFO sweeps the
+  // macro, which fans out to everything the macro is mapped to
+  const macroTargets: ModTarget[] = (macrosOf(track)?.toArray() ?? [])
+    .map((m, i) => ({ dest: 'macro' as const, fxId: '', pkey: String(i), label: `Macros · ${m.get('name') || `M${i + 1}`}` }))
+  const allTargets = [...targets, ...lfoRateTargets, ...macroTargets]
 
   // multi-target mapping: menu lists every parameter, a • marks assigned ones,
   // clicking toggles the assignment on/off

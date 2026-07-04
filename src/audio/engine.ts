@@ -550,6 +550,24 @@ class Engine {
       const spec = { key: 'send', label: 'Send', min: 0, max: 1, def: 0 } as any
       return { spec, base, setter: (v: number) => node.gain.rampTo(v, 0.02) }
     }
+    if (dest === 'macro') {
+      // Target a MACRO's value (pkey = macro index). The setter fans the value
+      // out to every parameter the macro is mapped to — audio-side only, the
+      // shared doc (and the knob) keeps the user's stored value. Macro targets
+      // are only inst/mix/send/fx, so the recursion can't loop back here.
+      const macros = t.get('macros') as Y.Array<Y.Map<any>> | undefined
+      const m = macros?.get(+pkey)
+      if (!m) return null
+      const spec = { key: 'macro', label: 'Macro', min: 0, max: 1, def: 0 } as any
+      const setter = (v: number) => {
+        const tgs = m.get('targets') as Y.Array<Y.Map<any>> | undefined
+        tgs?.forEach(tg => {
+          const r = this.resolveTarget(t, rec, tg.get('dest'), tg.get('fxId') || '', tg.get('pkey'))
+          if (r) r.setter(clamp(r.spec.min + (r.spec.max - r.spec.min) * v, r.spec.min, r.spec.max))
+        })
+      }
+      return { spec, base: (m.get('value') as number) ?? 0, setter }
+    }
     if (dest === 'lfo') {
       // Target another LFO's RATE (Hz). fxId holds the target LFO's id. Only
       // free-running (non-sync) LFOs actually track Hz — a synced target keeps
@@ -2032,7 +2050,16 @@ class Engine {
     const list = this.allTracks()
     let sendMod = false
     for (const t of list) {
-      if (this.lfoCfgsOf(t.get('id') as string, t).some(l => l.on && l.targets.some(tg => tg.dest === 'send'))) { sendMod = true; break }
+      // direct LFO→send, or LFO→macro where that macro fans out to a send
+      const macros = t.get('macros') as Y.Array<Y.Map<any>> | undefined
+      const macroHasSend = (pkey: string) => {
+        const tgs = macros?.get(+pkey)?.get('targets') as Y.Array<Y.Map<any>> | undefined
+        let has = false
+        tgs?.forEach(x => { if (x.get('dest') === 'send') has = true })
+        return has
+      }
+      if (this.lfoCfgsOf(t.get('id') as string, t).some(l => l.on && l.targets.some(tg =>
+        tg.dest === 'send' || (tg.dest === 'macro' && macroHasSend(tg.pkey))))) { sendMod = true; break }
     }
     if (!sendMod && this.mode === 'session') {
       for (const rec of this.built.values()) {

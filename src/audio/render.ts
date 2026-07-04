@@ -186,6 +186,24 @@ function resolveTarget(ot: OffTrack, dest: string, fxId: string, pkey: string) {
     if (!spec || typeof base !== 'number') return null
     return { spec, base, setter: (v: number) => { if (pkey === 'gain') ot.vol.volume.value = v; else ot.panner.pan.value = v } }
   }
+  if (dest === 'send') {
+    const node = pkey === 'B' ? ot.sendB : ot.sendA
+    const base = (pkey === 'B' ? ot.json.sendB : ot.json.sendA) ?? 0
+    const spec = { key: 'send', label: 'Send', min: 0, max: 1, def: 0 } as any
+    return { spec, base, setter: (v: number) => { node.gain.value = v } }
+  }
+  if (dest === 'macro') {
+    // A macro's value fans out to its mapped params (mirrors the live engine;
+    // macro targets are only inst/mix/send/fx so this can't recurse back here).
+    const m = ot.json.macros?.[+pkey]
+    if (!m) return null
+    const spec = { key: 'macro', label: 'Macro', min: 0, max: 1, def: 0 } as any
+    const setter = (v: number) => m.targets?.forEach(tg => {
+      const r = resolveTarget(ot, tg.dest, tg.fxId || '', tg.pkey)
+      if (r) r.setter(clamp(r.spec.min + (r.spec.max - r.spec.min) * v, r.spec.min, r.spec.max))
+    })
+    return { spec, base: m.value ?? 0, setter }
+  }
   const fxJson = ot.json.fx.find(f => (f.id || f.type) === fxId)
   const bf = ot.fx.find(f => f.id === fxId)
   if (!fxJson || !bf) return null
