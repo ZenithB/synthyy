@@ -12,7 +12,7 @@
 import * as Tone from 'tone'
 import { BAR, PPQ, Note, clamp } from '../types'
 import { exportProject, arrEndTicks, meta as docMeta, ProjectJSON, TrackJSON, ClipJSON, FxJSON } from '../state/doc'
-import { makeInstrument, makeEffect, Inst, Fx } from './devices'
+import { makeInstrument, makeEffect, setRateBpm, Inst, Fx } from './devices'
 import { instSchema, fxSchema, mixSpec, lfoShapeValue, LFO_DIV_TICKS, valueFromSpec } from './schema'
 import { applyMidiFx } from './midifx'
 import { getSampleBuffer } from './samples'
@@ -278,6 +278,7 @@ async function renderBuffer(
   const build: Parameters<typeof Tone.Offline>[0] = async ({ transport }) => {
     transport.PPQ = PPQ
     transport.bpm.value = bpm
+    setRateBpm(bpm)   // synced fx rate knobs derive Hz from this at build time
     transport.swing = project.meta.swing
     transport.swingSubdivision = '16n'
 

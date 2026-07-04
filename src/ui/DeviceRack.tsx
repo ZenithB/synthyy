@@ -21,7 +21,7 @@ import { Knob, openMenu, beginVDrag, MenuItem } from './widgets'
 import {
   INSTRUMENTS, EFFECTS, instSchema, fxSchema, defaultsFor,
   LFO_SHAPES, LFO_DIVS, LFO_PARAMS, MIDI_FX, midiFxSchema, mixSpec, fmtPct, fmtDb, ParamSpec,
-  EQ7_BANDS, EQ7_FREQS, eq7BandType,
+  EQ7_BANDS, EQ7_FREQS, eq7BandType, RATE_MODES, RATE_SYNC_SPEC, RATE_HI_SPEC,
 } from '../audio/schema'
 import { INST_PRESETS, DRUM_KITS } from '../packs'
 import { engine } from '../audio/engine'
@@ -580,6 +580,24 @@ function Eq7Card({ trackId, fxId, params }: { trackId: string; fxId: string; par
   )
 }
 
+// Switchable Rate knob: Sync (tempo division) / Low (0.01–300Hz) / High
+// (301Hz–1kHz). The little mode button cycles; the knob re-skins to match.
+// Each mode keeps its own stored value so switching back doesn't lose it.
+function RateControl({ trackId, fxId, params, spec }: { trackId: string; fxId: string; params: Y.Map<number>; spec: ParamSpec }) {
+  const mode = ((params.get('rateMode') ?? 1) | 0) % 3
+  const knobSpec = mode === 0 ? RATE_SYNC_SPEC : mode === 2 ? RATE_HI_SPEC : spec
+  return (
+    <div className="rate-ctl">
+      <Knob spec={knobSpec} value={params.get(knobSpec.key) ?? knobSpec.def}
+        onChange={v => setFxParam(trackId, fxId, knobSpec.key, v)} size={38} />
+      <button className="rate-mode" onClick={() => setFxParam(trackId, fxId, 'rateMode', (mode + 1) % 3)}
+        data-info="Rate mode — Sync: tempo divisions · Low: 0.01–300Hz · High: 301Hz–1kHz">
+        {RATE_MODES[mode]}
+      </button>
+    </div>
+  )
+}
+
 // Sidechain trigger source picker: Tempo (classic beat-synced pump), any track,
 // or one specific pad of a drum track (e.g. "duck the bass from THIS kick").
 function DuckSource({ trackId, fxId, fx }: { trackId: string; fxId: string; fx: Y.Map<any> }) {
@@ -641,9 +659,9 @@ function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
       ) : (
         <>
           <div className="knob-row">
-            {schema.params.map(spec => (
-              <Knob key={spec.key} spec={spec} value={params.get(spec.key) ?? spec.def} onChange={v => setFxParam(trackId, fxId, spec.key, v)} size={38} />
-            ))}
+            {schema.params.map(spec => spec.rateSwitch
+              ? <RateControl key={spec.key} trackId={trackId} fxId={fxId} params={params} spec={spec} />
+              : <Knob key={spec.key} spec={spec} value={params.get(spec.key) ?? spec.def} onChange={v => setFxParam(trackId, fxId, spec.key, v)} size={38} />)}
           </div>
           {type === 'duck' && <DuckSource trackId={trackId} fxId={fxId} fx={fx} />}
           {isComp && <GrMeter trackId={trackId} fxId={fxId} />}

@@ -11,10 +11,13 @@ export type ParamSpec = {
   exp?: boolean            // exponential knob response
   int?: boolean            // integer steps
   steps?: string[]         // enum knob: value is an index into steps
+  rateSwitch?: boolean     // Rate knob with Sync / Low / High modes (see RATE_* specs)
   fmt?: (v: number) => string
 }
 
 export const fmtHz = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)
+// Low-mode rate: 2 decimals below 10Hz, 1 decimal up to 300Hz
+export const fmtRate = (v: number) => `${v < 10 ? v.toFixed(2) : v.toFixed(1)}Hz`
 export const fmtSec = (v: number) => (v < 1 ? `${Math.round(v * 1000)}ms` : `${v.toFixed(2)}s`)
 export const fmtDb = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}dB`
 export const fmtPct = (v: number) => `${Math.round(v * 100)}%`
@@ -268,7 +271,7 @@ export const EFFECTS: EffectSchema[] = [
   {
     type: 'chorus', label: 'Chorus', icon: 'chorus',
     params: [
-      { key: 'rate', label: 'Rate', min: 0.1, max: 8, def: 1.5, exp: true, fmt: v => `${v.toFixed(1)}Hz` },
+      { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 1.5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.5, fmt: fmtPct },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 0.5, fmt: fmtPct },
     ],
@@ -333,7 +336,7 @@ export const EFFECTS: EffectSchema[] = [
   {
     type: 'phaser', label: 'Phaser', icon: 'phaser',
     params: [
-      { key: 'rate', label: 'Rate', min: 0.05, max: 8, def: 0.8, exp: true, fmt: v => `${v.toFixed(2)}Hz` },
+      { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 0.8, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'octaves', label: 'Sweep', min: 1, max: 6, def: 3, int: true, fmt: v => `${Math.round(v)}oct` },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 0.5, fmt: fmtPct },
     ],
@@ -349,7 +352,7 @@ export const EFFECTS: EffectSchema[] = [
   {
     type: 'autofilt', label: 'Auto Filter', icon: 'autofilt',
     params: [
-      { key: 'rate', label: 'Rate', min: 0.05, max: 8, def: 1, exp: true, fmt: v => `${v.toFixed(2)}Hz` },
+      { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 1, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.7, fmt: fmtPct },
       { key: 'base', label: 'Base', min: 80, max: 4000, def: 350, exp: true, fmt: fmtHz },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
@@ -358,7 +361,7 @@ export const EFFECTS: EffectSchema[] = [
   {
     type: 'trem', label: 'Tremolo', icon: 'trem',
     params: [
-      { key: 'rate', label: 'Rate', min: 0.5, max: 16, def: 5, exp: true, fmt: v => `${v.toFixed(1)}Hz` },
+      { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.6, fmt: fmtPct },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
     ],
@@ -366,14 +369,14 @@ export const EFFECTS: EffectSchema[] = [
   {
     type: 'autopan', label: 'Auto Pan', icon: 'autopan',
     params: [
-      { key: 'rate', label: 'Rate', min: 0.1, max: 10, def: 1.5, exp: true, fmt: v => `${v.toFixed(1)}Hz` },
+      { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 1.5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.8, fmt: fmtPct },
     ],
   },
   {
     type: 'vib', label: 'Vibrato', icon: 'vib',
     params: [
-      { key: 'rate', label: 'Rate', min: 0.5, max: 12, def: 5, exp: true, fmt: v => `${v.toFixed(1)}Hz` },
+      { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 0.6, def: 0.15, fmt: fmtPct },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
     ],
@@ -439,6 +442,24 @@ export const LFO_SHAPES = ['Sine', 'Triangle', 'Saw ↑', 'Saw ↓', 'Square', '
 export const LFO_DIVS = ['8 bar', '4 bar', '2 bar', '1 bar', '1/2', '1/4', '1/8', '1/8T', '1/16']
 // cycle length in transport ticks (PPQ=96 ⇒ quarter = 96, bar = 384)
 export const LFO_DIV_TICKS = [8 * 384, 4 * 384, 2 * 384, 384, 192, 96, 48, 32, 24]
+
+// ---- switchable Rate knobs (effects with `rateSwitch` on their rate spec) ----
+// Mode lives in the fx params map as rateMode: 0 = Sync (tempo division, index
+// in rateSync), 1 = Low (Hz in `rate`), 2 = High (Hz in `rateHi`). The schema's
+// own `rate` spec doubles as the Low knob; these two cover the other modes.
+export const RATE_MODES = ['Sync', 'Low', 'High']
+export const RATE_SYNC_SPEC: ParamSpec = { key: 'rateSync', label: 'Rate', min: 0, max: LFO_DIVS.length - 1, def: 5, int: true, steps: LFO_DIVS }
+export const RATE_HI_SPEC: ParamSpec = { key: 'rateHi', label: 'Rate', min: 301, max: 1000, def: 440, exp: true, int: true, fmt: v => `${Math.round(v)}Hz` }
+/** Effective LFO frequency (Hz) for a rate-switchable effect's stored params. */
+export function rateHzOf(get: (k: string) => number | undefined, bpm: number): number {
+  const mode = (get('rateMode') ?? 1) | 0
+  if (mode === 2) return Math.min(1000, Math.max(301, get('rateHi') ?? 440))
+  if (mode === 0) {
+    const ticks = LFO_DIV_TICKS[(get('rateSync') ?? 5) | 0] || 96
+    return (Math.max(1, bpm) * 96) / (60 * ticks)   // 1 / (ticks · secPerTick)
+  }
+  return Math.min(300, Math.max(0.01, get('rate') ?? 1))
+}
 
 export const LFO_PARAMS: ParamSpec[] = [
   { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.5, fmt: fmtPct },

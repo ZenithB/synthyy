@@ -5,7 +5,7 @@
 // stay clean; Drive additionally oversamples its waveshaper 4x.
 
 import * as Tone from 'tone'
-import { WAVES, DELAY_FRACTIONS, DUCK_DIV_TICKS, EQ7_BANDS, EQ7_FREQS, eq7BandType } from './schema'
+import { WAVES, DELAY_FRACTIONS, DUCK_DIV_TICKS, EQ7_BANDS, EQ7_FREQS, eq7BandType, rateHzOf } from './schema'
 import { snapToScale } from '../theory'
 import { meta } from '../state/doc'
 import { clamp } from '../types'
@@ -46,6 +46,39 @@ export type Inst = {
   noteOff: (p: number) => void
   trigger: (p: number, durSec: number, time: number, vel: number) => void
   dispose: () => void
+}
+
+// ---- switchable Rate knobs (Sync / Low / High) ----
+// Effects with a rate-switchable knob store rateMode/rate/rateHi/rateSync in
+// their params; the device re-derives its LFO frequency whenever one of those
+// keys (or the tempo) changes. Live devices register a re-push callback so a
+// bpm change retunes every synced rate; offline (export) devices skip the
+// registry — the render sets the bpm before building and never changes it.
+let rateBpm = 120
+const rateFns = new Set<() => void>()
+export function setRateBpm(bpm: number) {
+  if (!bpm || bpm === rateBpm) return
+  rateBpm = bpm
+  rateFns.forEach(f => f())
+}
+function makeRate(p: Record<string, number>, apply: (hz: number) => void) {
+  const st: Record<string, number> = {
+    rateMode: p.rateMode ?? 1, rate: p.rate ?? 1, rateHi: p.rateHi ?? 440, rateSync: p.rateSync ?? 5,
+  }
+  const push = () => apply(rateHzOf(k => st[k], rateBpm))
+  const offline = Tone.getContext().rawContext?.constructor?.name?.includes('Offline')
+  if (!offline) rateFns.add(push)
+  return {
+    hz0: rateHzOf(k => st[k], rateBpm),
+    /** Returns true when it consumed the key (one of the four rate fields). */
+    set: (k: string, v: number): boolean => {
+      if (!(k in st)) return false
+      st[k] = v
+      push()
+      return true
+    },
+    dispose: () => rateFns.delete(push),
+  }
 }
 
 export type Fx = {
@@ -859,19 +892,20 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'chorus': {
-      const node = new Tone.Chorus({ frequency: p.rate, delayTime: 3, depth: p.depth, wet: p.mix })
+      const rate = makeRate(p, hz => { node.frequency.value = hz })
+      const node = new Tone.Chorus({ frequency: rate.hz0, delayTime: 3, depth: p.depth, wet: p.mix })
       let depth = p.depth ?? 0, mix = p.mix ?? 0
       const gate = lfoGate(node)
       gate(depth > LFO_EPS && mix > LFO_EPS)
       return {
         node,
         set: (k, v) => {
-          if (k === 'rate') node.frequency.value = v
-          else if (k === 'depth') { depth = v; node.depth = v }
+          if (rate.set(k, v)) return
+          if (k === 'depth') { depth = v; node.depth = v }
           else { mix = v; node.wet.value = v }
           gate(depth > LFO_EPS && mix > LFO_EPS)
         },
-        dispose: () => node.dispose(),
+        dispose: () => { rate.dispose(); node.dispose() },
       }
     }
     case 'dist': {
@@ -952,15 +986,16 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'phaser': {
-      const node = new Tone.Phaser({ frequency: p.rate, octaves: p.octaves | 0, baseFrequency: 350, wet: p.mix })
+      const rate = makeRate(p, hz => { node.frequency.value = hz })
+      const node = new Tone.Phaser({ frequency: rate.hz0, octaves: p.octaves | 0, baseFrequency: 350, wet: p.mix })
       return {
         node,
         set: (k, v) => {
-          if (k === 'rate') node.frequency.value = v
-          else if (k === 'octaves') node.octaves = v | 0
+          if (rate.set(k, v)) return
+          if (k === 'octaves') node.octaves = v | 0
           else node.wet.value = v
         },
-        dispose: () => node.dispose(),
+        dispose: () => { rate.dispose(); node.dispose() },
       }
     }
     case 'pingpong': {
@@ -976,63 +1011,67 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'autofilt': {
-      const node = new Tone.AutoFilter({ frequency: p.rate, depth: p.depth, baseFrequency: p.base, wet: p.mix, octaves: 3.5 })
+      const rate = makeRate(p, hz => { node.frequency.value = hz })
+      const node = new Tone.AutoFilter({ frequency: rate.hz0, depth: p.depth, baseFrequency: p.base, wet: p.mix, octaves: 3.5 })
       let depth = p.depth ?? 0, mix = p.mix ?? 0
       const gate = lfoGate(node)
       gate(depth > LFO_EPS && mix > LFO_EPS)
       return {
         node,
         set: (k, v) => {
-          if (k === 'rate') node.frequency.value = v
-          else if (k === 'depth') { depth = v; node.depth.value = v }
+          if (rate.set(k, v)) return
+          if (k === 'depth') { depth = v; node.depth.value = v }
           else if (k === 'base') node.baseFrequency = v
           else { mix = v; node.wet.value = v }
           gate(depth > LFO_EPS && mix > LFO_EPS)
         },
-        dispose: () => node.dispose(),
+        dispose: () => { rate.dispose(); node.dispose() },
       }
     }
     case 'trem': {
-      const node = new Tone.Tremolo({ frequency: p.rate, depth: p.depth, wet: p.mix, spread: 60 })
+      const rate = makeRate(p, hz => { node.frequency.value = hz })
+      const node = new Tone.Tremolo({ frequency: rate.hz0, depth: p.depth, wet: p.mix, spread: 60 })
       let depth = p.depth ?? 0, mix = p.mix ?? 0
       const gate = lfoGate(node)
       gate(depth > LFO_EPS && mix > LFO_EPS)
       return {
         node,
         set: (k, v) => {
-          if (k === 'rate') node.frequency.value = v
-          else if (k === 'depth') { depth = v; node.depth.value = v }
+          if (rate.set(k, v)) return
+          if (k === 'depth') { depth = v; node.depth.value = v }
           else { mix = v; node.wet.value = v }
           gate(depth > LFO_EPS && mix > LFO_EPS)
         },
-        dispose: () => node.dispose(),
+        dispose: () => { rate.dispose(); node.dispose() },
       }
     }
     case 'autopan': {
-      const node = new Tone.AutoPanner({ frequency: p.rate, depth: p.depth })
+      const rate = makeRate(p, hz => { node.frequency.value = hz })
+      const node = new Tone.AutoPanner({ frequency: rate.hz0, depth: p.depth })
       let depth = p.depth ?? 0
       const gate = lfoGate(node)
       gate(depth > LFO_EPS)
       return {
         node,
         set: (k, v) => {
-          if (k === 'rate') node.frequency.value = v
-          else { depth = v; node.depth.value = v }
+          if (rate.set(k, v)) return
+          depth = v; node.depth.value = v
           gate(depth > LFO_EPS)
         },
-        dispose: () => node.dispose(),
+        dispose: () => { rate.dispose(); node.dispose() },
       }
     }
     case 'vib': {
-      const node = new Tone.Vibrato({ frequency: p.rate, depth: p.depth, wet: p.mix })
+      const rate = makeRate(p, hz => { node.frequency.value = hz })
+      const node = new Tone.Vibrato({ frequency: rate.hz0, depth: p.depth, wet: p.mix })
       return {
         node,
         set: (k, v) => {
-          if (k === 'rate') node.frequency.value = v
-          else if (k === 'depth') node.depth.value = v
+          if (rate.set(k, v)) return
+          if (k === 'depth') node.depth.value = v
           else node.wet.value = v
         },
-        dispose: () => node.dispose(),
+        dispose: () => { rate.dispose(); node.dispose() },
       }
     }
     case 'cheby': {

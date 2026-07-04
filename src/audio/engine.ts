@@ -13,7 +13,7 @@ import {
   createClip, trackById, returns, ensureReturns, midifxOf, envKeys, envPoints, followOf, scenes, sceneIndex,
   isAudioClip, masterFx, masterAuto, barTicks, beatTicks, timeSig,
 } from '../state/doc'
-import { makeInstrument, makeEffect, Inst, Fx } from './devices'
+import { makeInstrument, makeEffect, setRateBpm, Inst, Fx } from './devices'
 import { instSchema, fxSchema, lfoShapeValue, LFO_DIV_TICKS, LFO_PARAMS, mixSpec, midiFxSchema, valueFromSpec, ParamSpec } from './schema'
 import { getSampleBuffer, onSampleReady } from './samples'
 import { clipAudioBuffer, configureAudioPlayer, audioFieldsFromMap, audioRate } from './audioclip'
@@ -440,6 +440,7 @@ class Engine {
     const t = this.transport
     t.PPQ = 96
     t.bpm.value = meta.get('bpm') ?? 120
+    setRateBpm(t.bpm.value)   // tempo-synced fx rate knobs
     t.swing = meta.get('swing') ?? 0
     t.swingSubdivision = (meta.get('swingSubdivision') as any) ?? '16n'
 
@@ -1344,6 +1345,7 @@ class Engine {
     ev.changes.keys.forEach((_c, key) => {
       if (key === 'bpm') {
         t.bpm.rampTo(meta.get('bpm'), 0.1)
+        setRateBpm(meta.get('bpm') ?? 120)   // retune tempo-synced fx rates
         // tempo-synced delays follow the new tempo
         setTimeout(() => this.refreshDelays(), 150)
       } else if (key === 'swing') t.swing = meta.get('swing') ?? 0
