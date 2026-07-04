@@ -4,7 +4,7 @@
 // The Samples section is a file-system style browser over the sample bank:
 // folders, bulk folder import, rename/move/delete, drag-out to use anywhere.
 
-import React, { useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import { INST_PRESETS, DRUM_KITS, MIDI_LOOPS, PROGRESSIONS, progressionPitches } from '../packs'
 import { DRUM_PACKS, DrumPack, RoleName, packSampleId, ROLE_LABEL } from '../audio/drumpacks'
 import { engine } from '../audio/engine'
@@ -26,6 +26,7 @@ import {
   renameSample, moveSample, deleteSample, createSampleFolder, renameSampleFolder, deleteSampleFolder,
   collectDroppedAudio,
 } from '../audio/samples'
+import { ensureBasicSamples } from '../audio/basics'
 
 function Star({ id }: { id: string }) {
   useLib()
@@ -310,6 +311,8 @@ function SamplesBrowser({ query }: { query: string }) {
 export function Browser() {
   const [q, setQ] = useState('')
   useY(meta)
+  // first launch: generate the Basics test-tone bank (sweeps, noises, impulses)
+  useEffect(() => { ensureBasicSamples() }, [])
   const [order, setOrder] = useState<SectionId[]>(loadOrder)
   const [openMap, setOpenMap] = useState<Record<string, boolean>>(loadOpen)
   const isOpen = (id: string) => openMap[id] ?? true

@@ -154,7 +154,7 @@ async function loadLib() {
     emitLib()
   } catch { /* listing is best-effort */ }
 }
-loadLib()
+export const libReady: Promise<void> = loadLib()
 
 /** Every sample in the bank, folder-then-name sorted. Stable ref between changes. */
 export function listSamples(): SampleMeta[] {
@@ -263,6 +263,9 @@ async function store(name: string, bytes: ArrayBuffer, folder = ''): Promise<{ i
   onReadyCb?.(id)
   return { id, name }
 }
+
+/** Store locally-generated audio (the Basics test tones) like an imported file. */
+export const addGeneratedSample = (name: string, folder: string, bytes: ArrayBuffer) => store(name, bytes, folder)
 
 const cleanName = (fileName: string) => fileName.replace(/\.[^.]+$/, '').slice(0, 40)
 
