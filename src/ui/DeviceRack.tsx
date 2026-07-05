@@ -716,12 +716,31 @@ function SamplerControls({ trackId, inst }: { trackId: string; inst: Y.Map<any> 
   )
 }
 
+// Arp "Select" pattern: a one-octave piano strip where each semitone toggles
+// whether it's arpeggiated (relative to each held note). Backed by the 12-bit
+// `sel` param (bit i = +i semitones; bit 0 = the played note itself).
+const SEL_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+const SEL_BLACK = [1, 3, 6, 8, 10]
+function ArpSelect({ trackId, id, sel }: { trackId: string; id: string; sel: number }) {
+  const toggle = (i: number) => setMidiFxParam(trackId, id, 'sel', (sel ^ (1 << i)) >>> 0)
+  return (
+    <div className="arp-select" data-info="Toggle which notes of the octave the arp plays (relative to each held note)">
+      {SEL_NOTE_NAMES.map((nm, i) => (
+        <button key={i}
+          className={`arp-key ${SEL_BLACK.includes(i) ? 'black' : 'white'} ${(sel & (1 << i)) ? 'on' : ''}`}
+          onClick={() => toggle(i)} title={nm}>{nm}</button>
+      ))}
+    </div>
+  )
+}
+
 function MidiFxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
   const type = fx.get('type') as string
   const id = fx.get('id') as string
   const on = !!fx.get('on')
   const params = fx.get('params') as Y.Map<number>
   const schema = midiFxSchema(type)
+  const showArpSelect = type === 'arp' && ((params.get('pat') ?? 0) | 0) === 3
   return (
     <div className={`device midifx-device ${on ? '' : 'bypassed'}`}>
       <div className="device-head">
@@ -738,6 +757,7 @@ function MidiFxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
               <Knob key={spec.key} spec={spec} value={params.get(spec.key) ?? spec.def} onChange={v => setMidiFxParam(trackId, id, spec.key, v)} size={34} />
             ))}
           </div>}
+      {showArpSelect && <ArpSelect trackId={trackId} id={id} sel={(params.get('sel') ?? 1) | 0} />}
     </div>
   )
 }

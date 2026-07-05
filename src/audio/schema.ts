@@ -514,6 +514,9 @@ export const MIDI_FX: MidiFxSchema[] = [
     type: 'arp', label: 'Arp', icon: 'arpUp', params: [
       { key: 'rate', label: 'Rate', min: 0, max: 5, def: 3, int: true, steps: ['1/4', '1/8', '1/8T', '1/16', '1/16T', '1/32'] },
       { key: 'mode', label: 'Mode', min: 0, max: 3, def: 0, int: true, steps: ['Up', 'Down', 'Up-Dn', 'Rand'] },
+      // Pattern = which pitches each held note generates (Select adds a piano
+      // toggle grid, rendered by MidiFxCard, driven by the `sel` bitmask param).
+      { key: 'pat', label: 'Pattern', min: 0, max: 3, def: 0, int: true, steps: ['Octave', '5ths', 'Scale', 'Select'] },
       { key: 'oct', label: 'Octaves', min: 1, max: 4, def: 1, int: true, fmt: v => `${Math.round(v)}` },
       { key: 'gate', label: 'Gate', min: 0.1, max: 1, def: 0.8, fmt: fmtPct },
     ],

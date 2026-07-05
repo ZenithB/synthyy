@@ -658,6 +658,13 @@ button { cursor: pointer; background: none; border: none; }
 .midifx-device { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
 .midifx-device .device-title .icon { color: var(--accent); }
 .midifx-note { font-size: 10px; color: var(--dim); padding: 6px 2px; max-width: 130px; }
+/* Arp "Select" pattern — a one-octave piano toggle strip */
+.arp-select { display: flex; gap: 2px; margin-top: 7px; }
+.arp-key { flex: 1; min-width: 13px; height: 34px; border-radius: 0 0 3px 3px; border: 1px solid var(--border); font-size: 8px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 2px; color: var(--dim); }
+.arp-key.white { background: var(--keyWhite); color: var(--keyText); }
+.arp-key.black { background: var(--keyBlack); color: var(--dim); }
+.arp-key.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); box-shadow: 0 0 5px color-mix(in srgb, var(--accent) 60%, transparent); }
+.arp-key:hover { filter: brightness(1.12); }
 .sends-device .device-title .icon { color: var(--accent2); }
 .add-midi .icon { color: var(--accent); }
 .add-midi:hover { color: var(--accent); border-color: var(--accent); }

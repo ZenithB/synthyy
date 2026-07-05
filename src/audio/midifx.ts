@@ -4,28 +4,62 @@
 // device chain before the instrument is triggered.
 
 import { Note, clamp } from '../types'
-import { snapToScale } from '../theory'
+import { snapToScale, getScale } from '../theory'
 import { ARP_DIV_TICKS } from './schema'
 
 export type MidiFxData = { type: string; on: boolean; params: Record<string, number> }
 
 const BAR = 384
 
-export function arpExpand(notes: Note[], p: Record<string, number>, _loopLen: number): Note[] {
+/** The ascending pitch set the arp cycles through, before direction is applied.
+ *  `pat` picks how each held note generates pitches:
+ *    0 Octave — the held notes themselves, stacked across `oct` octaves.
+ *    1 5ths   — each held note plus its perfect 5th, stacked across octaves.
+ *    2 Scale  — walk the project scale upward from the lowest held note for
+ *               `oct` octaves (other held notes ignored — one line up the scale).
+ *    3 Select — each held note plus every semitone toggled in `sel` (a 12-bit
+ *               mask, bit i = +i semitones), stacked across octaves. */
+function arpSequence(held: number[], pat: number, oct: number, sel: number, root: number, scaleId: string): number[] {
+  if (pat === 2) {
+    const ivs = getScale(scaleId).ivs
+    const s0 = snapToScale(held[0], root, scaleId)
+    const rel0 = (((s0 - root) % 12) + 12) % 12
+    let deg = ivs.indexOf(rel0); if (deg < 0) deg = 0
+    const baseRoot = s0 - rel0                 // the scale root in s0's octave
+    const seq: number[] = []
+    const count = ivs.length * oct
+    for (let k = 0; k < count; k++) {
+      const idx = deg + k
+      seq.push(baseRoot + ivs[idx % ivs.length] + 12 * Math.floor(idx / ivs.length))
+    }
+    return seq
+  }
+  const offsets = pat === 1 ? [0, 7]
+    : pat === 3 ? Array.from({ length: 12 }, (_, i) => i).filter(i => sel & (1 << i))
+    : [0]
+  if (!offsets.length) offsets.push(0)         // Select with nothing on → the note itself
+  const one: number[] = []
+  held.forEach(h => offsets.forEach(o => one.push(h + o)))
+  const seq: number[] = []
+  for (let o = 0; o < oct; o++) one.forEach(pp => seq.push(pp + o * 12))
+  return [...new Set(seq)].sort((a, b) => a - b)
+}
+
+export function arpExpand(notes: Note[], p: Record<string, number>, _loopLen: number, root = 0, scaleId = 'major'): Note[] {
   if (notes.length === 0) return notes
   const step = ARP_DIV_TICKS[Math.max(0, Math.min(ARP_DIV_TICKS.length - 1, (p.rate ?? 0) | 0))] || 48
-  const mode = (p.mode ?? 0) | 0
+  const mode = (p.mode ?? 0) | 0     // direction: 0 up · 1 down · 2 up-down · 3 random
+  const pat = (p.pat ?? 0) | 0       // pitch pattern (see arpSequence)
   const oct = Math.max(1, p.oct ?? 1)
   const gate = p.gate ?? 0.8
+  const sel = (p.sel ?? 1) | 0
   const groups = new Map<number, Note[]>()
   notes.forEach(n => { const g = groups.get(n.s) ?? []; g.push(n); groups.set(n.s, g) })
   const out: Note[] = []
   groups.forEach(g => {
     const end = Math.max(...g.map(n => n.s + n.d))
-    let seq = [...new Set(g.map(n => n.p))].sort((a, b) => a - b)
-    const ext: number[] = []
-    for (let o = 0; o < oct; o++) seq.forEach(pp => ext.push(pp + o * 12))
-    seq = ext
+    const held = [...new Set(g.map(n => n.p))].sort((a, b) => a - b)
+    let seq = arpSequence(held, pat, oct, sel, root, scaleId)
     if (mode === 1) seq = seq.reverse()
     else if (mode === 2 && seq.length > 2) seq = [...seq, ...seq.slice(1, -1).reverse()]
     let i = 0
@@ -71,7 +105,7 @@ export function applyMidiFx(
         return [{ ...n, p: pitch }]
       })
     } else if (d.type === 'arp' && !isDrum) {
-      out = arpExpand(out, p, loopLen || BAR)
+      out = arpExpand(out, p, loopLen || BAR, root, scaleId)
     }
   })
   return out
