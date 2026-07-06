@@ -64,16 +64,19 @@ function targetRange(track: Y.Map<any>, dest: string, fxId: string, pkey: string
   else if (dest === 'mix') spec = mixSpec(pkey)
   else if (dest === 'send') return [0, 1]         // A/B send level
   else if (dest === 'lfo') spec = LFO_PARAMS[2]   // another LFO's rate (Hz)
-  else {
+  else if (dest === 'midi') {
+    const mfx = track.get('midifx') as Y.Array<Y.Map<any>> | undefined
+    if (mfx) for (let i = 0; i < mfx.length; i++) if (mfx.get(i).get('id') === fxId) { spec = midiFxSchema(mfx.get(i).get('type')).params.find(s => s.key === pkey); break }
+  } else {
     const fxArr = track.get('fx') as Y.Array<Y.Map<any>>
     for (let i = 0; i < fxArr.length; i++) if (fxArr.get(i).get('id') === fxId) { spec = fxSchema(fxArr.get(i).get('type')).params.find(s => s.key === pkey); break }
   }
   return spec ? [spec.min, spec.max] : [0, 1]
 }
 
-// All continuous (non-enum) parameters on a track that an LFO or macro can
-// modulate — instrument params, effect params, and the A/B send levels.
-type ModTarget = { dest: 'inst' | 'fx' | 'lfo' | 'send' | 'macro'; fxId: string; pkey: string; label: string }
+// All parameters on a track that an LFO or macro can modulate — instrument
+// params, effect params, the A/B send levels, and the MIDI-fx params.
+type ModTarget = { dest: 'inst' | 'fx' | 'lfo' | 'send' | 'macro' | 'midi'; fxId: string; pkey: string; label: string }
 function modTargets(track: Y.Map<any>): ModTarget[] {
   const out: ModTarget[] = []
   const instSch = instSchema(track.get('inst').get('type'))
@@ -86,6 +89,15 @@ function modTargets(track: Y.Map<any>): ModTarget[] {
   })
   out.push({ dest: 'send', fxId: '', pkey: 'A', label: 'Mix · Send A' })
   out.push({ dest: 'send', fxId: '', pkey: 'B', label: 'Mix · Send B' })
+  // MIDI-fx params (arp / chord / velocity / random). Stepped params ARE
+  // included — the modulated value is quantized to a step, so an LFO can sweep
+  // the arp rate, flip its direction, morph a chord voicing, etc.
+  const mfx = track.get('midifx') as Y.Array<Y.Map<any>> | undefined
+  mfx?.forEach(f => {
+    const sch = midiFxSchema(f.get('type'))
+    sch.params.forEach(p =>
+      out.push({ dest: 'midi', fxId: f.get('id'), pkey: p.key, label: `${sch.label} · ${p.label}` }))
+  })
   return out
 }
 const targetVal = (t: ModTarget) => `${t.dest}|${t.fxId}|${t.pkey}`

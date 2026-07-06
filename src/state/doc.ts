@@ -792,6 +792,10 @@ export function setMacroValue(trackId: string, idx: number, value: number, range
       if (dest === 'inst') (t.get('inst').get('params') as Y.Map<number>).set(pkey, v)
       else if (dest === 'mix') t.set(pkey, v)
       else if (dest === 'send') t.set(pkey === 'B' ? 'sendB' : 'sendA', v)
+      else if (dest === 'midi') {
+        const mfx = t.get('midifx') as Y.Array<Y.Map<any>> | undefined
+        if (mfx) for (let i = 0; i < mfx.length; i++) if (mfx.get(i).get('id') === fxId) { (mfx.get(i).get('params') as Y.Map<number>).set(pkey, v); break }
+      }
       else {
         const fx = t.get('fx') as Y.Array<Y.Map<any>>
         const i = fxIndexIn(fx, fxId)

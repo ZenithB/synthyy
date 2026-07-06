@@ -107,6 +107,15 @@ class Engine {
   private lfoRateMod = new Map<string, number>()
   private lfoRatedThisFrame = new Set<string>()
 
+  // ---- live MIDI-fx modulation (LFO/macro → arp/chord/velocity/random params) ----
+  // MIDI fx transform notes at scheduling time, not in the audio graph, so a
+  // modulated value is stashed here (read by applyMidiFx) and the playing Part
+  // is regenerated when the value crosses a meaningful (quantized) step.
+  private midiFxMod = new Map<string, number>()      // "tid|fxId|pkey" → live value
+  private midiFxQuant = new Map<string, number>()     // last quantized signature per key
+  private midiDirty = new Set<string>()               // trackIds needing a Part rebuild
+  private midiRebuildAt = new Map<string, number>()   // throttle: last rebuild time per track
+
   // ---- per-frame lookup caches ----
   // The modulation loop runs every animation frame; everything it needs from
   // the Yjs doc (track list, LFO configs, envelope/automation breakpoints,
@@ -570,6 +579,32 @@ class Engine {
       }
       return { spec, base: (m.get('value') as number) ?? 0, setter }
     }
+    if (dest === 'midi') {
+      // Target a MIDI-fx param (arp/chord/velocity/random). fxId = midifx id.
+      // The setter stashes the live value; when it crosses a quantized step the
+      // track is marked for a Part rebuild (applyModulation regenerates notes).
+      const tid = t.get('id') as string
+      const chain = midifxOf(t)
+      let fxMap: Y.Map<any> | undefined
+      if (chain) for (let i = 0; i < chain.length; i++) if (chain.get(i).get('id') === fxId) { fxMap = chain.get(i); break }
+      if (!fxMap) return null
+      const spec = midiFxSchema(fxMap.get('type')).params.find(s => s.key === pkey)
+      const base = (fxMap.get('params') as Y.Map<number>).get(pkey)
+      if (!spec || typeof base !== 'number') return null
+      const key = `${tid}|${fxId}|${pkey}`
+      // int/stepped params rebuild only on integer crossings; continuous params
+      // are quantized to ~40 steps of their range so a slow LFO doesn't rebuild
+      // the Part every single frame.
+      const quantOf = (v: number) => (spec.int || spec.steps) ? Math.round(v) : Math.round((v - spec.min) / ((spec.max - spec.min) || 1) * 40)
+      return {
+        spec, base,
+        setter: (v: number) => {
+          this.midiFxMod.set(key, v)
+          const q = quantOf(v)
+          if (this.midiFxQuant.get(key) !== q) { this.midiFxQuant.set(key, q); this.midiDirty.add(tid) }
+        },
+      }
+    }
     if (dest === 'lfo') {
       // Target another LFO's RATE (Hz). fxId holds the target LFO's id. Only
       // free-running (non-sync) LFOs actually track Hz — a synced target keeps
@@ -714,6 +749,17 @@ class Engine {
         if (tg.dest === 'lfo') this.lfoRatedThisFrame.add(tg.fxId)   // its rate override is live this frame
         newActive.set(`${tid}|${k}`, { tid, dest: tg.dest, fxId: tg.fxId, pkey: tg.pkey })
       }
+
+      // A modulated MIDI-fx value crossed a step → regenerate the playing part's
+      // notes with the new value. Throttled to ≤20 Hz/track (rebuilds re-expand
+      // the arp/chord); the dirty flag persists until a rebuild actually fires.
+      if (this.midiDirty.has(tid) && rec.part && rec.partKey) {
+        if (audioTime - (this.midiRebuildAt.get(tid) ?? 0) >= 0.05) {
+          this.midiRebuildAt.set(tid, audioTime)
+          this.midiDirty.delete(tid)
+          this.refreshPart(rec)
+        }
+      }
     }
 
     // ---- master-bus arrangement automation (its own auto store, not a track) ----
@@ -765,6 +811,15 @@ class Engine {
     if (m.tid === 'master') {
       const r = this.resolveMasterTarget(`${m.dest}|${m.fxId}|${m.pkey}`)
       if (r) r.setter(r.base)
+      return
+    }
+    // MIDI-fx: drop the live override so the stored param takes over again, then
+    // regenerate the playing part with the un-modulated value.
+    if (m.dest === 'midi') {
+      const key = `${m.tid}|${m.fxId}|${m.pkey}`
+      this.midiFxMod.delete(key); this.midiFxQuant.delete(key)
+      const rec = this.built.get(m.tid)
+      if (rec?.part) this.refreshPart(rec)
       return
     }
     const t = trackById(m.tid)
@@ -1407,7 +1462,17 @@ class Engine {
   private applyMidiFx(t: Y.Map<any>, notes: Note[], loopLen: number): Note[] {
     const chain = midifxOf(t)
     if (!chain || chain.length === 0) return notes
-    const data = chain.map(d => ({ type: d.get('type') as string, on: !!d.get('on'), params: (d.get('params') as Y.Map<number>).toJSON() }))
+    const tid = t.get('id') as string
+    const data = chain.map(d => {
+      const fxId = d.get('id') as string
+      const params = (d.get('params') as Y.Map<number>).toJSON() as Record<string, number>
+      // fold in any live LFO/macro override before expanding the notes
+      if (this.midiFxMod.size) for (const s of midiFxSchema(d.get('type')).params) {
+        const ov = this.midiFxMod.get(`${tid}|${fxId}|${s.key}`)
+        if (ov !== undefined) params[s.key] = ov
+      }
+      return { type: d.get('type') as string, on: !!d.get('on'), params }
+    })
     return applyMidiFxData(data, notes, loopLen, (meta.get('root') ?? 9) as number, (meta.get('scale') ?? 'minor') as string, t.get('kind') === 'drum')
   }
 
