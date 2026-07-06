@@ -32,7 +32,24 @@ const MIN_P = 21
 let noteClip: Note[] = []
 
 // 16-step drum grid — the fastest way to build a beat. Writes to clip notes.
-function StepGrid({ clipMap, trackId }: { clipMap: Y.Map<any>; trackId: string | null }) {
+// Playback position [0,1) within the selected clip, or null when it isn't the
+// clip currently sounding. Mirrors the canvas piano-roll's playhead logic so
+// the two views agree frame-for-frame.
+function clipPlayFraction(selClip: any, clipMap: Y.Map<any>): number | null {
+  if (!engine.playing || !selClip) return null
+  const len = clipMap.get('len') ?? BAR
+  if (selClip.kind === 'session' && engine.mode === 'session') {
+    const st = engine.clipState(selClip.trackId, selClip.sceneId)
+    if (st.playing) { const prog = engine.clipProgress(selClip.trackId); if (prog !== null) return prog }
+  } else if (selClip.kind === 'arr' && engine.mode === 'arr') {
+    const start = clipMap.get('start') ?? 0
+    const t = engine.positionTicks()
+    if (t >= start && t < start + len) return (((t - start) % len) + len) % len / len
+  }
+  return null
+}
+
+function StepGrid({ clipMap, trackId, selClip }: { clipMap: Y.Map<any>; trackId: string | null; selClip: any }) {
   const len = clipMap.get('len') ?? BAR
   const nSteps = Math.min(64, Math.max(4, Math.round(len / STEP16)))
   // beat/bar shading follows the meter (16th-note steps per beat / per bar)
@@ -46,8 +63,30 @@ function StepGrid({ clipMap, trackId }: { clipMap: Y.Map<any>; trackId: string |
     if (hit) deleteNotes(clipMap, [hit[0]], 'Clear step')
     else { addNote(clipMap, { p: pad, s: step * STEP16, d: STEP16, v: ui.velo, pr: ui.drawProb }, 'Add step'); engine.previewOn(trackId, pad, ui.velo) }
   }
+
+  // Sweeping playhead: a vertical line moved each frame across the cells region,
+  // aligned to the first row's .step-cells box (which spans all rows).
+  const gridRef = useRef<HTMLDivElement>(null)
+  const phRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const draw = () => {
+      const line = phRef.current, grid = gridRef.current
+      if (!line || !grid) return
+      const frac = clipPlayFraction(selClip, clipMap)
+      if (frac === null) { if (line.style.opacity !== '0') line.style.opacity = '0'; return }
+      const cells = grid.querySelector('.step-cells') as HTMLElement | null
+      if (!cells) return
+      const gRect = grid.getBoundingClientRect(), cRect = cells.getBoundingClientRect()
+      const x = (cRect.left - gRect.left) + grid.scrollLeft + frac * cRect.width
+      line.style.transform = `translateX(${x}px)`
+      line.style.opacity = '1'
+    }
+    return subscribeFrame(draw)
+  }, [selClip, clipMap])
+
   return (
-    <div className="step-grid">
+    <div className="step-grid" ref={gridRef}>
+      <div className="step-playhead" ref={phRef} style={{ opacity: 0 }} />
       {DRUM_PADS.map((name, pad) => (
         <div key={pad} className="step-row">
           <button className="step-pad" onClick={() => engine.previewOn(trackId, pad, 0.9)}>{name}</button>
@@ -1006,7 +1045,7 @@ export function PianoRoll() {
       </div>
       <div className="roll-canvas-box" ref={boxRef}>
         {isDrum && stepView
-          ? <StepGrid clipMap={clipMap} trackId={trackId} />
+          ? <StepGrid clipMap={clipMap} trackId={trackId} selClip={selClip} />
           : <canvas
               ref={canvasRef}
               onPointerDown={onPointerDown}
