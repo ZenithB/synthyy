@@ -13,7 +13,7 @@ import * as Tone from 'tone'
 import { BAR, PPQ, Note, clamp } from '../types'
 import { exportProject, arrEndTicks, meta as docMeta, ProjectJSON, TrackJSON, ClipJSON, FxJSON } from '../state/doc'
 import { makeInstrument, makeEffect, setRateBpm, Inst, Fx } from './devices'
-import { instSchema, fxSchema, mixSpec, lfoShapeValue, LFO_DIV_TICKS, valueFromSpec } from './schema'
+import { instSchema, fxSchema, mixSpec, lfoShapeValue, LFO_DIV_TICKS, LFO_PARAMS, midiFxSchema, valueFromSpec } from './schema'
 import { applyMidiFx } from './midifx'
 import { getSampleBuffer } from './samples'
 import { clipAudioBuffer, configureAudioPlayer } from './audioclip'
@@ -61,6 +61,17 @@ type OffTrack = {
   sendB: Tone.Gain
   loopLen: number
   envEntries: [string, { t: number; v: number }[]][] | null
+  // live MIDI-fx modulation (LFO/macro → arp/chord/…): the same override + Part
+  // regeneration the live engine does, so bounces match playback.
+  midiParts: { part: Tone.Part; rebuild: () => void }[]
+  midiMod: Map<string, number>       // "fxId|pkey" → live value
+  midiQuant: Map<string, number>     // last quantized signature
+  midiDirty: boolean
+  midiRebuildAt: number
+  // free-LFO phase integration so an LFO can modulate another LFO's rate offline
+  lfoPhase: Map<string, number>
+  lfoRateMod: Map<string, number>    // lfoId → modulated Hz (applied next frame)
+  lfoLastTime: number
 }
 
 // Tone.PluckSynth (Karplus-Strong) throws AbortError inside an OfflineAudioContext,
@@ -169,7 +180,11 @@ function buildOffTrack(t: TrackJSON, master: Tone.Volume, returnInputs: Tone.Ton
     if (returnInputs[0]) sendA.connect(returnInputs[0])
     if (returnInputs[1]) sendB.connect(returnInputs[1])
   }
-  return { json: t, inst, fx, panner, vol, sendA, sendB, loopLen: BAR, envEntries: null }
+  return {
+    json: t, inst, fx, panner, vol, sendA, sendB, loopLen: BAR, envEntries: null,
+    midiParts: [], midiMod: new Map(), midiQuant: new Map(), midiDirty: false, midiRebuildAt: 0,
+    lfoPhase: new Map(), lfoRateMod: new Map(), lfoLastTime: 0,
+  }
 }
 
 /** Resolve an LFO/automation target to its spec, base value and live setter. */
@@ -193,8 +208,7 @@ function resolveTarget(ot: OffTrack, dest: string, fxId: string, pkey: string) {
     return { spec, base, setter: (v: number) => { node.gain.value = v } }
   }
   if (dest === 'macro') {
-    // A macro's value fans out to its mapped params (mirrors the live engine;
-    // macro targets are only inst/mix/send/fx so this can't recurse back here).
+    // A macro's value fans out to its mapped params (mirrors the live engine).
     const m = ot.json.macros?.[+pkey]
     if (!m) return null
     const spec = { key: 'macro', label: 'Macro', min: 0, max: 1, def: 0 } as any
@@ -203,6 +217,32 @@ function resolveTarget(ot: OffTrack, dest: string, fxId: string, pkey: string) {
       if (r) r.setter(clamp(r.spec.min + (r.spec.max - r.spec.min) * v, r.spec.min, r.spec.max))
     })
     return { spec, base: m.value ?? 0, setter }
+  }
+  if (dest === 'midi') {
+    // A MIDI-fx param (arp/chord/velocity/random): stash the value + mark the
+    // track dirty so applyMod regenerates its notes. fxId = midifx id.
+    const mfx = ot.json.midifx?.find(d => (d.id || d.type) === fxId)
+    if (!mfx) return null
+    const spec = midiFxSchema(mfx.type).params.find(s => s.key === pkey)
+    const base = mfx.params[pkey]
+    if (!spec || typeof base !== 'number') return null
+    const key = `${fxId}|${pkey}`
+    const quantOf = (v: number) => (spec.int || spec.steps) ? Math.round(v) : Math.round((v - spec.min) / ((spec.max - spec.min) || 1) * 40)
+    return {
+      spec, base,
+      setter: (v: number) => {
+        ot.midiMod.set(key, v)
+        const q = quantOf(v)
+        if (ot.midiQuant.get(key) !== q) { ot.midiQuant.set(key, q); ot.midiDirty = true }
+      },
+    }
+  }
+  if (dest === 'lfo') {
+    // Another LFO's rate (Hz); free-running only. Setter stashes the effective
+    // Hz, read next frame by the phase integrator in applyMod.
+    const target = ot.json.lfos?.find(l => l.id === fxId)
+    if (!target) return null
+    return { spec: LFO_PARAMS[2], base: target.hz ?? 1, setter: (v: number) => ot.lfoRateMod.set(fxId, v) }
   }
   const fxJson = ot.json.fx.find(f => (f.id || f.type) === fxId)
   const bf = ot.fx.find(f => f.id === fxId)
@@ -232,11 +272,21 @@ function applyMod(ot: OffTrack, posTicks: number, audioTime: number, bpm: number
     }
   }
 
+  // per-frame delta for free-LFO phase integration (a synced target keeps its
+  // tempo division; a free target integrates its possibly-modulated Hz)
+  const dt = Math.min(0.1, Math.max(0, audioTime - (ot.lfoLastTime || audioTime)))
+  ot.lfoLastTime = audioTime
   ot.json.lfos?.forEach(lfo => {
-    const raw = lfoShapeValue(lfo.shape | 0,
-      lfo.sync
-        ? posTicks / (LFO_DIV_TICKS[lfo.rate | 0] || 384) + (lfo.phase ?? 0)
-        : audioTime * (lfo.hz ?? 1) + (lfo.phase ?? 0))
+    const id = lfo.id || ''
+    let raw: number
+    if (lfo.sync) {
+      raw = lfoShapeValue(lfo.shape | 0, posTicks / (LFO_DIV_TICKS[lfo.rate | 0] || 384) + (lfo.phase ?? 0))
+    } else {
+      const effHz = ot.lfoRateMod.get(id) ?? (lfo.hz ?? 1)
+      const ph = (ot.lfoPhase.get(id) ?? 0) + dt * effHz
+      ot.lfoPhase.set(id, ph)
+      raw = lfoShapeValue(lfo.shape | 0, ph + (lfo.phase ?? 0))
+    }
     if (!lfo.on) return
     // multi-target list; fall back to the legacy single-field mapping
     const tgs = lfo.targets?.length
@@ -255,6 +305,14 @@ function applyMod(ot: OffTrack, posTicks: number, audioTime: number, bpm: number
     const base = autoNorm.has(k) ? valueFromSpec(r.spec, autoNorm.get(k)!) : r.base
     const off = (lfoOff.get(k) ?? 0) * (r.spec.max - r.spec.min) * 0.5
     r.setter(clamp(base + off, r.spec.min, r.spec.max))
+  }
+
+  // a modulated MIDI-fx value crossed a step → regenerate the notes (throttled
+  // ≤20 Hz, same as the live engine)
+  if (ot.midiDirty && audioTime - ot.midiRebuildAt >= 0.05) {
+    ot.midiRebuildAt = audioTime
+    ot.midiDirty = false
+    ot.midiParts.forEach(mp => mp.rebuild())
   }
 }
 
@@ -369,7 +427,9 @@ async function renderBuffer(
       t.fx.forEach(f => { if (f.on) { const bf = ot.fx.find(x => x.id === (f.id || f.type)); if (bf) wireDuck(f, bf.dev) } })
 
       const isDrum = t.kind === 'drum'
-      const midifx = (t.midifx ?? []).map(d => ({ type: d.type, on: d.on, params: d.params }))
+      // keep the id so live MIDI-fx overrides (LFO/macro → arp/chord/…) can be
+      // folded in per rebuild; applyMidiFx itself only needs type/on/params
+      const midifx = (t.midifx ?? []).map(d => ({ id: d.id || d.type, type: d.type, on: d.on, params: d.params }))
       const tid = t.id ?? t.name
 
       // The clip's internal pattern always loops (loopEnd = lenTicks). `infinite`
@@ -384,15 +444,37 @@ async function renderBuffer(
           const raw = getSampleBuffer(a.sampleId || '')
           if (!raw) return
           // identical crop + crossfade + pitch/cents/reverse/fades as live playback
-          const player = new Tone.Player(clipAudioBuffer(a.sampleId || '', raw, a.offset, a.dur, !!a.loop, a.xfade) as any)
+          const buf = clipAudioBuffer(a.sampleId || '', raw, a.offset, a.dur, !!a.loop, a.xfade) as any
+          // Session (scene) render loops the scene, so a NON-looping clip re-fires
+          // from its head each clip-length — mirroring live session playback. A
+          // looping clip streams continuously; arrangement clips play once.
+          if (infinite && !a.loop) {
+            for (let s = startTicks; s < lengthTicks; s += Math.max(1, lenTicks)) {
+              const p = new Tone.Player(buf); configureAudioPlayer(p, a); Tone.connect(p, ot.inst.out)
+              try { p.sync().start(`${s}i`) } catch { /* ok */ }
+            }
+            return
+          }
+          const player = new Tone.Player(buf)
           configureAudioPlayer(player, a)
           Tone.connect(player, ot.inst.out)
           try { const s = player.sync().start(`${startTicks}i`); if (!infinite) s.stop(`${startTicks + lenTicks}i`) } catch { /* ok */ }
           return
         }
-        let notes: Note[] = Object.values(clip.notes).map(n => ({ ...n }))
-        notes = applyMidiFx(midifx, notes, lenTicks, root, scaleId, isDrum)
-        const events = notes.map(n => ({ time: `${n.s}i`, ...n }))
+        const rawNotes: Note[] = Object.values(clip.notes).map(n => ({ ...n }))
+        // Expand notes through the MIDI-fx chain, folding in any live override
+        // (LFO/macro → MIDI-fx param) so a rebuild re-derives the arp/chord/etc.
+        const expand = () => {
+          const merged = midifx.map(d => {
+            let params = d.params
+            for (const s of midiFxSchema(d.type).params) {
+              const ov = ot.midiMod.get(`${d.id}|${s.key}`)
+              if (ov !== undefined) { if (params === d.params) params = { ...d.params }; params[s.key] = ov }
+            }
+            return { type: d.type, on: d.on, params }
+          })
+          return applyMidiFx(merged, rawNotes.map(n => ({ ...n })), lenTicks, root, scaleId, isDrum).map(n => ({ time: `${n.s}i`, ...n }))
+        }
         const part = new Tone.Part((time, ev: any) => {
           if (ev.pr < 1 && Math.random() > ev.pr) return
           // Two notes on the exact same tick hitting one oscillator-based voice
@@ -401,10 +483,13 @@ async function renderBuffer(
           // aborts the bounce. Skip the duplicate (inaudible anyway on a mono voice).
           try { ot.inst.trigger(ev.p, Math.max(0.02, Tone.Ticks(ev.d).toSeconds()), time, ev.v) } catch { /* ok */ }
           fireDucks(tid, ev.p, time)
-        }, events as any)
+        }, expand() as any)
         part.loop = true
         part.loopStart = 0
         part.loopEnd = `${lenTicks}i`
+        // MIDI-fx-bearing clips register for regeneration; rebuild only actually
+        // fires when an override changes (ot.midiDirty), so this is ~free otherwise
+        if (midifx.length) ot.midiParts.push({ part, rebuild: () => { part.clear(); expand().forEach(ev => part.add(ev)) } })
         // never let one clip's scheduling abort the whole bounce (matches the
         // live engine's defensive try/catch around clip parts)
         try { part.start(`${startTicks}i`); if (!infinite) part.stop(`${startTicks + lenTicks}i`) } catch { /* ok */ }
