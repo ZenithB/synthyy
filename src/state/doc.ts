@@ -79,7 +79,7 @@ export type TrackJSON = {
   output?: string                       // routing target for buses: 'master' | busTrackId
   sends?: Record<string, number>        // busTrackId → send level (sends into user buses)
   locked?: boolean                      // built-in (e.g. the A/B send buses) — cannot be deleted
-  send?: 'A' | 'B'                      // marks the built-in A/B send buses (id-independent)
+  send?: 'A' | 'B' | 'F'               // marks the built-in send buses (id-independent): A, B, or Feedback
   lfos?: LfoJSON[]; macros?: MacroJSON[]; midifx?: MidiFxJSON[]
   // arrangement automation: paramId ("dest|fxId|pkey") → breakpoints in absolute song ticks
   auto?: Record<string, { t: number; v: number }[]>
@@ -99,9 +99,14 @@ export type ProjectJSON = {
 // The two built-in send buses every session starts with — undeletable, full fx
 // chains. A track's A/B sends route into these (A = reverb, B = ping-pong delay).
 // Tagged with `send` so the engine finds them by marker, not by (regenerated) id.
+// A third built-in bus — Feedback. Signal flows input → effects → sends → output,
+// and its own send loops back into itself (30% default) through a short delay in
+// the engine, so it regenerates whatever effects you put on it. Its send section
+// also reaches every other bus; its output defaults to master.
 export const DEFAULT_BUSES: TrackJSON[] = [
   { id: 'busA', name: 'A', color: 7, kind: 'bus', inst: { type: 'audiobus', params: {} }, fx: [{ type: 'reverb', on: true, params: { size: 3.6, mix: 1 } }], gain: 0, pan: 0, mute: false, solo: false, output: 'master', locked: true, send: 'A' },
   { id: 'busB', name: 'B', color: 9, kind: 'bus', inst: { type: 'audiobus', params: {} }, fx: [{ type: 'pingpong', on: true, params: { time: 3, fb: 0.4, mix: 1 } }], gain: 0, pan: 0, mute: false, solo: false, output: 'master', locked: true, send: 'B' },
+  { id: 'busF', name: 'Feedback', color: 4, kind: 'bus', inst: { type: 'audiobus', params: {} }, fx: [{ type: 'reverb', on: true, params: { size: 2.4, mix: 1 } }], gain: 0, pan: 0, mute: false, solo: false, output: 'master', locked: true, send: 'F', sends: { busF: 0.3 } },
 ]
 
 // ---------- Y builders ----------
@@ -696,6 +701,16 @@ export function cleanupLegacyReturns() {
   if (returns.length === 0) return
   const hasABuses = busList().some(b => b.get('send') === 'A' || b.get('send') === 'B')
   if (hasABuses) mutate('Clean up legacy returns', () => returns.delete(0, returns.length))
+}
+/** Startup migration: a project persisted before the Feedback bus existed won't
+ *  have it — add it (once, with its self-send remapped to the new id). Idempotent
+ *  and only invoked outside a shared room, so it can't race into duplicates. */
+export function ensureFeedbackBus() {
+  if (busList().some(b => b.get('send') === 'F')) return
+  const fb = DEFAULT_BUSES.find(b => b.send === 'F'); if (!fb) return
+  const nid = id8()
+  const sends = fb.sends ? Object.fromEntries(Object.entries(fb.sends).map(([k, v]) => [k === fb.id ? nid : k, v])) : undefined
+  mutate('Add Feedback bus', () => tracks.push([yTrack({ ...fb, id: nid, sends })]))
 }
 export function returnAt(i: number): Y.Map<any> | undefined { return returns.get(i) }
 export function setReturnGain(i: number, v: number) {
@@ -1463,8 +1478,14 @@ export function loadProject(json: ProjectJSON, label = 'Load project') {
     }
     // migration: ensure the built-in A/B send buses exist (projects predating them,
     // or imports lacking them) so each track's A/B sends always resolve to a bus.
-    const haveSend = (s: 'A' | 'B') => json.tracks.some(t => t.kind === 'bus' && t.send === s)
-    for (const b of DEFAULT_BUSES) if (!haveSend(b.send!)) tracks.push([yTrack({ ...b, id: id8() })])
+    const haveSend = (s: 'A' | 'B' | 'F') => json.tracks.some(t => t.kind === 'bus' && t.send === s)
+    for (const b of DEFAULT_BUSES) {
+      if (haveSend(b.send!)) continue
+      const nid = id8()
+      // a self-referential send (Feedback loops into itself) must point at the new id
+      const sends = b.sends ? Object.fromEntries(Object.entries(b.sends).map(([k, v]) => [k === b.id ? nid : k, v])) : undefined
+      tracks.push([yTrack({ ...b, id: nid, sends })])
+    }
     for (const s of json.scenes) {
       const m = new Y.Map<any>()
       const sid = id8()

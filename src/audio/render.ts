@@ -536,7 +536,17 @@ async function renderBuffer(
         const sends = ot.json.sends
         if (!sends) return
         for (const [bid, level] of Object.entries(sends)) {
-          if (!level || bid === idOf(ot)) continue
+          if (!level) continue
+          if (bid === idOf(ot)) {
+            // Feedback bus loops into itself through a short delay (mirrors the
+            // live engine); other self-sends are skipped as before.
+            if (ot.json.send === 'F') {
+              const d = new Tone.Delay({ delayTime: 0.09, maxDelay: 1 })
+              const g = new Tone.Gain(level)
+              Tone.connect(ot.vol, d); Tone.connect(d, g); Tone.connect(g, ot.inst.out)
+            }
+            continue
+          }
           const inp = busInputOf(bid)
           if (!inp) continue
           const g = new Tone.Gain(level)

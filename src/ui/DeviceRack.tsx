@@ -11,7 +11,7 @@ import {
   addLfo, removeLfo, setLfoField, addLfoTarget, removeLfoTarget, lfoTargetList,
   addMidiFx, removeMidiFx, setMidiFxParam, setMidiFxOn, midifxOf,
   ensureMacros, macrosOf, setMacroValue, addMacroTarget, removeMacroTarget, clearMacroTargets, setMacroName,
-  setSamplerSample, setDrumPadSample, busList,
+  setSamplerSample, setDrumPadSample, busList, setBusSend,
   clips, clipKey, isAudioClip, masterFx, tracks, setDuckSource,
 } from '../state/doc'
 import { attemptBusSend, assignKitToTrack } from './actions'
@@ -779,11 +779,21 @@ function SendsCard({ trackId, track }: { trackId: string; track: Y.Map<any> }) {
   // Every bus is a send target now — A and B are just pre-set buses, sent to via
   // the same per-bus send level as any user bus (no more dedicated →A/→B knobs).
   const buses = busList().filter(b => b.get('id') !== trackId)
+  // The Feedback bus additionally loops into ITSELF — a locked-destination send
+  // (30% default) that regenerates its own output. Set it directly (no feedback
+  // warning; the loop is intentional and routed through a safe internal delay).
+  const isFeedback = track.get('send') === 'F'
+  const fbSpec: ParamSpec = { key: 'fb-self', label: '↺ Feedback', min: 0, max: 0.95, def: 0.3, fmt: fmtPct }
   return (
     <div className="device sends-device">
       <div className="device-head"><span className="device-title"><Icon name="send" size={13} /> Sends</span></div>
       <div className="knob-row">
-        {buses.length === 0
+        {isFeedback && (
+          <span data-info="Feedback loop — how much of this bus's output loops back into itself (through a short delay). The destination is locked to itself.">
+            <Knob spec={fbSpec} value={(sends?.get(trackId) as number) ?? 0.3} onChange={v => setBusSend(trackId, trackId, v)} size={36} accent="var(--accent2)" />
+          </span>
+        )}
+        {buses.length === 0 && !isFeedback
           ? <span className="device-audio-hint">No buses to send to</span>
           : buses.map(b => {
             const bid = b.get('id') as string

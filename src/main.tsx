@@ -2,7 +2,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { App } from './ui/App'
-import { idb, initIfEmpty, isDocEmpty, maybeTakeCarried, roomId, cleanupLegacyReturns } from './state/doc'
+import { idb, initIfEmpty, isDocEmpty, maybeTakeCarried, roomId, cleanupLegacyReturns, ensureFeedbackBus } from './state/doc'
 import { startP2P, setPresence, requestState } from './state/net'
 import { DEFAULT_PROJECT } from './packs'
 import { initKeyboardPiano, initWebMidi } from './audio/input'
@@ -44,6 +44,7 @@ async function boot() {
     setTimeout(tick, 1500)
   } else {
     initIfEmpty(DEFAULT_PROJECT)
+    ensureFeedbackBus()   // add the Feedback bus to projects saved before it existed
   }
 
   startP2P()

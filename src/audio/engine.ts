@@ -48,6 +48,11 @@ type BuiltTrack = {
   queuedKey: string | null
   queuedPart: Tone.Part | null
   unobserve: (() => void) | null
+  // Feedback bus only: its post-fader signal loops back into its own input
+  // through a short delay (the delay makes the Web-Audio cycle valid + audible);
+  // fbSend is the loop level (the "30%" send).
+  fbDelay: Tone.Delay | null
+  fbSend: Tone.Gain | null
 }
 
 type BuiltReturn = { id: string; fx: Fx; channel: Tone.Volume }
@@ -962,6 +967,15 @@ class Engine {
       outNode: isBus ? null : this.master, busSends: new Map(),
       part: null, player: null, clipRepeat: null, partKey: null, partStartTicks: 0, partLoopTicks: BAR,
       queuedKey: null, queuedPart: null, unobserve: null,
+      fbDelay: null, fbSend: null,
+    }
+    // Feedback bus: post-fader → short delay → loop gain → back into the bus input
+    // (inst.out). The delay makes the cycle a legal Web-Audio graph and gives the
+    // regeneration an audible spacing; the loop gain is the "send level".
+    if (t.get('send') === 'F') {
+      rec.fbDelay = new Tone.Delay({ delayTime: 0.09, maxDelay: 1 })
+      rec.fbSend = new Tone.Gain((t.get('sends') as Y.Map<number> | undefined)?.get(tid) ?? 0.3)
+      vol.connect(rec.fbDelay); rec.fbDelay.connect(rec.fbSend); rec.fbSend.connect(inst.out)
     }
     this.built.set(tid, rec)
     this.wireSends(rec)
@@ -1003,7 +1017,11 @@ class Engine {
         if (!busIds.includes(bid)) { try { g.disconnect() } catch { /* ok */ } try { rec.vol.disconnect(g) } catch { /* ok */ } g.dispose(); rec.busSends.delete(bid) }
       })
       for (const bid of busIds) {
-        if (bid === rec.id) continue
+        if (bid === rec.id) {
+          // the Feedback bus loops into itself through its dedicated delay path
+          if (rec.fbSend) rec.fbSend.gain.rampTo((sm?.get(bid) as number) ?? 0, 0.02)
+          continue
+        }
         const level = (sm?.get(bid) as number) ?? 0
         const g = rec.busSends.get(bid)
         if (g) g.gain.rampTo(level, 0.02)
@@ -1179,6 +1197,8 @@ class Engine {
       rec.sendB.dispose()
       rec.busSends.forEach(g => { try { g.disconnect() } catch { /* ok */ } g.dispose() })
       rec.busSends.clear()
+      if (rec.fbSend) { try { rec.fbSend.disconnect() } catch { /* ok */ } rec.fbSend.dispose() }
+      if (rec.fbDelay) { try { rec.fbDelay.disconnect() } catch { /* ok */ } rec.fbDelay.dispose() }
     } catch { /* dispose races are harmless */ }
     this.built.delete(rec.id)
     this.meterConnected.delete(rec.id)
@@ -2217,11 +2237,12 @@ class Engine {
     const active = new Set<string>()
     for (const b of buses) {
       const bt = trackById(b.id)
-      const send = bt?.get('send') as string | undefined   // built-in A/B marker
-      if (send && sendMod) { active.add(b.id); continue }
+      const send = bt?.get('send') as string | undefined   // built-in send marker (A/B/F)
+      const ab = send === 'A' || send === 'B'               // only A/B carry per-track sendA/sendB
+      if (ab && sendMod) { active.add(b.id); continue }
       for (const t of list) {
-        if (t.get('id') === b.id) continue
-        if (send && (((t.get(send === 'B' ? 'sendB' : 'sendA') as number) ?? 0) > 0.0001)) { active.add(b.id); break }
+        if (t.get('id') === b.id) continue                  // self-send doesn't count as external input
+        if (ab && (((t.get(send === 'B' ? 'sendB' : 'sendA') as number) ?? 0) > 0.0001)) { active.add(b.id); break }
         const sm = t.get('sends') as Y.Map<number> | undefined
         if (sm && (((sm.get(b.id) as number) ?? 0) > 0.0001)) { active.add(b.id); break }
       }
