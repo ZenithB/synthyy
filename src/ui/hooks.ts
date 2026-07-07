@@ -1,6 +1,19 @@
 import { useEffect, useReducer, useRef } from 'react'
 import * as Y from 'yjs'
 
+/** Edge auto-scroll velocity for a marquee drag along one axis (px/frame).
+ *  `pos` is the pointer coordinate; [lo,hi] the visible viewport bounds. Returns
+ *  0 while the pointer is well inside, then a signed velocity that ramps from a
+ *  slow crawl at the activation margin up to a cap as the pointer pushes past
+ *  the edge. Content-awareness (stopping at the scroll limits) is the caller's
+ *  job — clamp the applied scroll so it never runs into empty space. */
+export function edgeScrollVelocity(pos: number, lo: number, hi: number, margin = 30): number {
+  const MIN = 1.5, MAX = 30, RAMP = margin * 4
+  if (pos > hi - margin) return MIN + Math.min(1, (pos - (hi - margin)) / RAMP) * (MAX - MIN)
+  if (pos < lo + margin) return -(MIN + Math.min(1, ((lo + margin) - pos) / RAMP) * (MAX - MIN))
+  return 0
+}
+
 /** Re-render whenever a Y type (deeply) changes. */
 export function useY(target: Y.AbstractType<any> | null | undefined) {
   const [, bump] = useReducer((x: number) => x + 1, 0)

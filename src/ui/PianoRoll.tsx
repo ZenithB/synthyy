@@ -11,7 +11,7 @@ import {
   envPoints, setEnvPoints, followOf, setFollow, barTicks, beatTicks,
 } from '../state/doc'
 import { setUI, ui, useUI, toast } from '../state/store'
-import { useY, subscribeFrame } from './hooks'
+import { useY, subscribeFrame, edgeScrollVelocity } from './hooks'
 import { openMenu, ColorRow, beginVDrag } from './widgets'
 import { inScale, snapToScale, midiName, getScale } from '../theory'
 import { instSchema, fxSchema, mixSpec, FOLLOW_ACTIONS } from '../audio/schema'
@@ -204,6 +204,35 @@ export function PianoRoll() {
   }
   const rowOf = (p: number) => pitches.indexOf(p)
   const pitchAtRow = (r: number) => pitches[clamp(r, 0, pitches.length - 1)]
+
+  // Edge auto-scroll while marquee-selecting: pan the view when the selection
+  // box's moving end nears a grid edge (speed ramps with overshoot), clamped to
+  // the notes/pitch content so it never scrolls into empty space. The anchor
+  // (x0/y0, canvas px) is pinned to its content point as we scroll, so the box
+  // resolves to the right notes on release.
+  const marqueeRaf = useRef<number | null>(null)
+  const stopMarqueeScroll = () => { if (marqueeRaf.current != null) { cancelAnimationFrame(marqueeRaf.current); marqueeRaf.current = null } }
+  const runMarqueeScroll = () => {
+    const d = dragRef.current, box = boxRef.current
+    if (d && d.type === 'marquee' && box && clipMap) {
+      const W = box.clientWidth, gridH = box.clientHeight - LANE_H
+      const rh = Math.max(4, Math.round((isDrum ? 30 : 13) * view.current.rowZoom))
+      const pxPerTick = view.current.pxPerBar / BAR
+      const vx = edgeScrollVelocity(d.x1, KEY_W, W)
+      const vy = edgeScrollVelocity(d.y1, 0, gridH)
+      if (vx || vy) {
+        let contentTicks = clipMap.get('len') ?? BAR
+        for (const [, n] of notesOf(clipMap)) contentTicks = Math.max(contentTicks, n.s + n.d)
+        const maxSX = Math.max(0, contentTicks * pxPerTick - (W - KEY_W))
+        const maxSY = Math.max(0, pitches.length * rh - gridH)
+        if (vx) { const ns = clamp(view.current.scrollX + vx, 0, maxSX); d.x0 -= ns - view.current.scrollX; view.current.scrollX = ns }
+        if (vy) { const ns = clamp(view.current.scrollY + vy, 0, maxSY); d.y0 -= ns - view.current.scrollY; view.current.scrollY = ns }
+        needsDraw.current = true
+      }
+    }
+    marqueeRaf.current = requestAnimationFrame(runMarqueeScroll)
+  }
+  useEffect(() => stopMarqueeScroll, [])
 
   // first-open: center on content or C4
   const centeredRef = useRef<string | null>(null)
@@ -601,6 +630,8 @@ export function PianoRoll() {
       } else {
         if (!e.shiftKey) { sel.current = new Set(); bump() }
         dragRef.current = { type: 'marquee', x0: loc.x, y0: loc.y, x1: loc.x, y1: loc.y, add: e.shiftKey }
+        stopMarqueeScroll()
+        marqueeRaf.current = requestAnimationFrame(runMarqueeScroll)
       }
     }
   }
@@ -707,6 +738,7 @@ export function PianoRoll() {
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
+    stopMarqueeScroll()
     const d = dragRef.current
     dragRef.current = null
     needsDraw.current = true

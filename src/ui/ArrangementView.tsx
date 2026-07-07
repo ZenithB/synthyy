@@ -17,7 +17,7 @@ import { autoTargets } from '../audio/params'
 import { AutomationLane } from './AutomationLane'
 import { engine } from '../audio/engine'
 import { setUI, ui, useUI, toast } from '../state/store'
-import { useY, useRaf } from './hooks'
+import { useY, useRaf, edgeScrollVelocity } from './hooks'
 import { openMenu, ColorRow, MenuItem, capturePointer, Knob, HFader, InlineRename, beginVDrag } from './widgets'
 import { selectClip, trackHeaderMenu, assignKitToTrack, addSampleToArr, copyArrSelection, hasArrClipboard, pasteArrClipboard, splitArrClipAt, addSynthTrack, addDrumTrack, addAudio, addBus } from './actions'
 import { Icon } from './icons'
@@ -252,6 +252,40 @@ export function ArrangementView() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const headsRef = useRef<HTMLDivElement>(null)
   const lanesRef = useRef<HTMLDivElement>(null)
+  // Edge auto-scroll while marquee-dragging: the last pointer position (viewport
+  // coords) + a rAF handle. When the pointer nears/passes a viewport edge the
+  // scroller pans (ramped by overshoot), clamped to the real content so it can't
+  // run into empty space, and the marquee keeps extending to the pointer.
+  const marqueePtr = useRef<{ x: number; y: number } | null>(null)
+  const autoScrollRaf = useRef<number | null>(null)
+  // Content extents (layout px) the marquee end is clamped to, so the selection
+  // box can never overflow past the real content and inflate the scroll area
+  // (which would let auto-scroll run forever into empty space).
+  const contentDimsRef = useRef({ w: Infinity, h: Infinity })
+  const stopAutoScroll = () => { if (autoScrollRaf.current != null) { cancelAnimationFrame(autoScrollRaf.current); autoScrollRaf.current = null } }
+  const runAutoScroll = () => {
+    const sc = scrollRef.current, p = marqueePtr.current
+    if (sc && p) {
+      const rect = sc.getBoundingClientRect()
+      const vx = edgeScrollVelocity(p.x, rect.left, rect.right)
+      const vy = edgeScrollVelocity(p.y, rect.top, rect.bottom)
+      if (vx || vy) {
+        const beforeL = sc.scrollLeft, beforeT = sc.scrollTop
+        if (vx) sc.scrollLeft = beforeL + vx      // browser clamps to [0, scrollWidth-clientWidth]
+        if (vy) sc.scrollTop = beforeT + vy        // → content-aware, never infinite
+        if (sc.scrollLeft !== beforeL || sc.scrollTop !== beforeT) {
+          const zz = ui.uiZoom || 1
+          const lr = lanesRef.current!.getBoundingClientRect()
+          const { w, h } = contentDimsRef.current
+          setDrag(d => (d && d.type === 'marquee')
+            ? { ...d, x1: clamp((p.x - lr.left) / zz, 0, w), y1: clamp((p.y - lr.top) / zz, 0, h), moved: true }
+            : d)
+        }
+      }
+    }
+    autoScrollRaf.current = requestAnimationFrame(runAutoScroll)
+  }
+  useEffect(() => stopAutoScroll, [])
   // Keep the left track headers in vertical lockstep with the lane area: they
   // live in a separate (non-scrolling) column, so translate their inner content
   // to mirror the scroll position. The corner stays pinned (like the ruler).
@@ -296,6 +330,7 @@ export function ArrangementView() {
     if (r.autoOpen) { autoTop[r.id] = yAcc; bgRows.push({ tid: r.id, kind: 'auto', top: yAcc, clips: false }); yAcc += LANE_H }
   }
   const lanesHeight = Math.max(yAcc, LANE_H)
+  contentDimsRef.current = { w: width, h: lanesHeight }   // marquee-clamp bounds (layout px)
   const trackTopByIdx = (i: number) => { const r = rows[i]; return r ? trackTop[r.id] : 0 }
   const rowAtY = (y: number) => bgRows.find(r => y >= r.top && y < r.top + LANE_H)
   const trackIdxAtY = (y: number) => {
@@ -500,6 +535,9 @@ export function ArrangementView() {
     const y = (e.clientY - rect.top) / z
     setDrag({ type: 'marquee', x0: x, y0: y, x1: x, y1: y, moved: false })
     capturePointer(e)
+    marqueePtr.current = { x: e.clientX, y: e.clientY }
+    stopAutoScroll()
+    autoScrollRaf.current = requestAnimationFrame(runAutoScroll)
   }
   const beginResize = (e: React.PointerEvent, id: string) => {
     e.stopPropagation()
@@ -515,8 +553,10 @@ export function ArrangementView() {
       const targetIdx = lr ? trackIdxAtY((e.clientY - lr.top) / z) : drag.origLane
       setDrag({ ...drag, dx: (e.clientX - drag.startX) / z / pxPerTick, dLane: targetIdx - drag.origLane, copy: e.altKey || drag.copy })
     } else if (drag.type === 'marquee') {
+      marqueePtr.current = { x: e.clientX, y: e.clientY }
       const rect = lanesRef.current!.getBoundingClientRect()
-      setDrag({ ...drag, x1: (e.clientX - rect.left) / z, y1: (e.clientY - rect.top) / z, moved: true })
+      const { w, h } = contentDimsRef.current
+      setDrag({ ...drag, x1: clamp((e.clientX - rect.left) / z, 0, w), y1: clamp((e.clientY - rect.top) / z, 0, h), moved: true })
     } else if (drag.type === 'resize') {
       setDrag({ ...drag, dLen: (e.clientX - drag.startX) / z / pxPerTick })
     } else if (drag.type === 'timesel') {
@@ -533,6 +573,8 @@ export function ArrangementView() {
     }
   }
   const onPointerUp = (e: React.PointerEvent) => {
+    stopAutoScroll()
+    marqueePtr.current = null
     if (!drag) return
     if (drag.type === 'move') {
       // snap the delta off the dragged clip, then apply it to the whole group
