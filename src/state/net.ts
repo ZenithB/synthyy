@@ -207,7 +207,8 @@ export async function startP2P() {
   // redundancy = relayUrls.length so EVERY peer joins ALL the pinned relays
   // (guaranteed overlap), not a random subset.
   const wire = (joinRoom: any, label: string, relayUrls: string[]) => {
-    const config = { ...baseConfig, relayUrls, relayRedundancy: relayUrls.length }
+    // 0.25: relay urls/redundancy moved under `relayConfig`
+    const config = { ...baseConfig, relayConfig: { urls: relayUrls, redundancy: relayUrls.length } }
     let room: any
     try {
       room = joinRoom(config, roomId)
@@ -215,35 +216,37 @@ export async function startP2P() {
       console.warn('[sf-p2p] join failed via', label, e)
       return
     }
-    const [sendU, onU] = room.makeAction('yu')
-    const [sendS, onS] = room.makeAction('ys')
-    const [sendA, onA] = room.makeAction('aw')
-    const [sendRq, onRq] = room.makeAction('rq')
-    onU((u: any) => { recv(u); applyDoc(u) })
-    onS((u: any) => { recv(u); applyDoc(u) })
-    onA((u: any) => { recv(u); applyAware(u) })
-    sendUFns.push((u, t) => { sent(u); try { sendU(u, t)?.catch?.(() => {}) } catch { /* ok */ } })
-    sendAFns.push((u, t) => { sent(u); try { sendA(u, t)?.catch?.(() => {}) } catch { /* ok */ } })
-    sendRqFns.push((_u, t) => { net.sentMsgs++; try { sendRq(new Uint8Array(0), t)?.catch?.(() => {}) } catch { /* ok */ } })
+    // 0.25: makeAction returns { send, onMessage } (was a [send, on] tuple);
+    // send targets via options.target; handlers get (data, { peerId }).
+    const actU = room.makeAction('yu')
+    const actS = room.makeAction('ys')
+    const actA = room.makeAction('aw')
+    const actRq = room.makeAction('rq')
+    actU.onMessage = (u: any) => { recv(u); applyDoc(u) }
+    actS.onMessage = (u: any) => { recv(u); applyDoc(u) }
+    actA.onMessage = (u: any) => { recv(u); applyAware(u) }
+    sendUFns.push((u, t) => { sent(u); try { actU.send(u, { target: t })?.catch?.(() => {}) } catch { /* ok */ } })
+    sendAFns.push((u, t) => { sent(u); try { actA.send(u, { target: t })?.catch?.(() => {}) } catch { /* ok */ } })
+    sendRqFns.push((_u, t) => { net.sentMsgs++; try { actRq.send(new Uint8Array(0), { target: t })?.catch?.(() => {}) } catch { /* ok */ } })
 
     // Hand a peer the full project + presence (idempotent in Yjs).
     const pushTo = (peer: string) => {
       const s = Y.encodeStateAsUpdate(doc); sent(s)
-      try { sendS(s, peer)?.catch?.(() => {}) } catch { /* ok */ }
+      try { actS.send(s, { target: peer })?.catch?.(() => {}) } catch { /* ok */ }
       const a = encodeAwarenessUpdate(awareness, [...awareness.getStates().keys()]); sent(a)
-      try { sendA(a, peer)?.catch?.(() => {}) } catch { /* ok */ }
+      try { actA.send(a, { target: peer })?.catch?.(() => {}) } catch { /* ok */ }
     }
 
     // A peer explicitly asked for state — always answer if we actually have a
     // project, even if we already pushed once (their first push may have dropped).
-    onRq((_u: any, peer: string) => { if (!isDocEmpty()) pushTo(peer) })
+    actRq.onMessage = (_u: any, ctx: { peerId: string }) => { if (!isDocEmpty()) pushTo(ctx.peerId) }
 
-    room.onPeerJoin((peer: string) => {
+    room.onPeerJoin = (peer: string) => {
       console.info('[sf-p2p] peer joined via', label, peer)
       if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null }
       // PULL: ask them for the project in case they're the one who has it and we
-      // don't. Cheap, and the answer (onRq) only fires if they have content.
-      try { sendRq(new Uint8Array(0), peer)?.catch?.(() => {}) } catch { /* ok */ }
+      // don't. Cheap, and the answer (actRq.onMessage) only fires if they have content.
+      try { actRq.send(new Uint8Array(0), { target: peer })?.catch?.(() => {}) } catch { /* ok */ }
       // PUSH: if we have the project, hand it over — but only ONCE per peerId.
       // The same peer connects via BOTH torrent and nostr (shared selfId), so
       // without this guard we'd send the full document 2 strategies × 3 retries
@@ -257,8 +260,9 @@ export async function startP2P() {
       announcedOnline = true
       setUI({ netStatus: 'online' })
       toast('A friend connected')
-    })
-    room.onPeerLeave((peer: string) => {
+    }
+    // 0.25: peer events are assignable properties, not subscribe functions
+    room.onPeerLeave = (peer: string) => {
       console.info('[sf-p2p] peer left', label, peer)
       servedPeers.delete(peer)  // a rejoin should get a fresh push
       // Debounce: a single strategy's channel dropping on cellular shouldn't flap
@@ -269,9 +273,9 @@ export async function startP2P() {
           if (!anyPeers()) setUI({ netStatus: 'connecting' })
         }, 2500)
       }
-    })
+    }
 
-    wiredRooms.push({ label, room, sendS })
+    wiredRooms.push({ label, room, sendS: (u, t) => { try { actS.send(u, { target: t })?.catch?.(() => {}) } catch { /* ok */ } } })
   }
 
   // Fan a local change out across every connected strategy. Duplicate
@@ -289,9 +293,12 @@ export async function startP2P() {
   // deliberately — its brokers sit on odd ports (the first thing locked-down
   // networks block), it's the flakiest in practice, and its bundle is ~40x the
   // others, so it was all cost and little coverage.
+  // trystero 0.25 split each strategy into its own scoped package (the old
+  // `trystero/<strategy>` subpaths now throw a deprecation error). Installing
+  // only the two we use also shed ~240 transitive deps (waku/firebase/supabase).
   const strategies: [string, () => Promise<any>, string[]][] = [
-    ['torrent', () => import('trystero/torrent'), TORRENT_TRACKERS],
-    ['nostr', () => import('trystero/nostr'), NOSTR_RELAYS],
+    ['torrent', () => import('@trystero-p2p/torrent'), TORRENT_TRACKERS],
+    ['nostr', () => import('@trystero-p2p/nostr'), NOSTR_RELAYS],
   ]
   await Promise.all(strategies.map(async ([label, imp, relayUrls]) => {
     try {
