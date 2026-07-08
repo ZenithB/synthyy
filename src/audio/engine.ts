@@ -472,6 +472,12 @@ class Engine {
     this.limiter.connect(Tone.getDestination())
     this.captureTap = new Tone.Gain(1)
     this.limiter.connect(this.captureTap)
+    // The mbcomp worklet module MUST be registered before ANY chain builds: an
+    // mbcomp constructed pre-registration silently degrades to a passthrough
+    // Gain, and the master chain (unlike tracks, rebuilt on every edit) would
+    // stay a passthrough until some bypass toggle forced a rebuild — the
+    // "master effects don't work until I bypass something" session-start bug.
+    await this.ensureMbWorklet()
     this.masterChainOut = this.master
     this.buildMasterFx()
     masterFx.observeDeep(this.onMasterFxDeep)
