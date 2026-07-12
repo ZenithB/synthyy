@@ -689,8 +689,11 @@ button { cursor: pointer; background: none; border: none; }
 .step-grid { height: 100%; overflow: auto; padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; position: relative; }
 /* sweeping playhead over the step cells (moved per-frame via translateX) */
 .step-playhead { position: absolute; top: 4px; bottom: 4px; left: 0; width: 2px; background: var(--playhead); box-shadow: 0 0 6px var(--playhead); pointer-events: none; z-index: 4; will-change: transform; }
-.step-row { display: flex; align-items: center; gap: 6px; }
-.step-pad { width: 56px; flex-shrink: 0; text-align: left; font-size: 11px; color: var(--dim); padding: 4px 2px; border-radius: 4px; }
+/* width: max-content lets long loops extend the row's real box past the panel
+   (so the sticky pad label has the full row to stick within — sticky can't
+   escape its parent's box); min-width keeps short grids filling the panel. */
+.step-row { display: flex; align-items: center; gap: 6px; width: max-content; min-width: 100%; }
+.step-pad { width: 56px; flex-shrink: 0; text-align: left; font-size: 11px; color: var(--dim); padding: 4px 2px; border-radius: 4px; position: sticky; left: 0; z-index: 2; background: var(--bg0); }
 .step-pad:hover { color: var(--text); background: var(--bg2); }
 .step-cells { display: flex; gap: 3px; flex: 1; }
 .step-cell { flex: 1; min-width: 16px; height: 26px; border-radius: 3px; background: var(--bg2); border: 1px solid var(--border); }

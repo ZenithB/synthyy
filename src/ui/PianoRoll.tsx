@@ -51,7 +51,10 @@ function clipPlayFraction(selClip: any, clipMap: Y.Map<any>): number | null {
 
 function StepGrid({ clipMap, trackId, selClip }: { clipMap: Y.Map<any>; trackId: string | null; selClip: any }) {
   const len = clipMap.get('len') ?? BAR
-  const nSteps = Math.min(64, Math.max(4, Math.round(len / STEP16)))
+  // Show the WHOLE loop — up to 16 bars (256 steps in 4/4; hard cap keeps odd
+  // meters from exploding the DOM). Long grids scroll horizontally; the pad
+  // names stay pinned (sticky) so you always know which row you're editing.
+  const nSteps = Math.min(512, Math.max(4, Math.round(len / STEP16)))
   // beat/bar shading follows the meter (16th-note steps per beat / per bar)
   const stepsPerBeat = Math.max(1, Math.round(beatTicks() / STEP16))
   const stepsPerBar = Math.max(1, Math.round(barTicks() / STEP16))
