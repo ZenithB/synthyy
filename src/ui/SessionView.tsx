@@ -16,6 +16,7 @@ import { useY, useYShallow, useRaf } from './hooks'
 import { Fader, MeterBar, Knob, openMenu, ColorRow, MenuItem, InlineRename } from './widgets'
 import { peersList, subscribeAwareness, awarenessVersion, setPresence } from '../state/net'
 import { Icon } from './icons'
+import { TrackInput } from './TrackInput'
 import {
   selectClip, selectTrack, copyClipRef, pasteClipTo, hasClipboard,
   addSynthTrack, addDrumTrack, addAudio, addBus, attemptSetOutput,
@@ -292,6 +293,7 @@ function TrackHeader({ track, onReorder, dragging }: { track: Y.Map<any>; onReor
         <MeterBar getDb={() => engine.meterDb(trackId)} height={64} />
         <Knob spec={PAN_SPEC} value={track.get('pan') ?? 0} onChange={v => setTrackMix(trackId, { pan: v })} size={26} />
       </div>
+      {kind === 'audio' && <TrackInput trackId={trackId} />}
       {kind === 'bus' && (
         <div className="bus-out" onClick={e => e.stopPropagation()} data-info="Where this bus's output is routed">
           <span className="bus-out-label">Output ▾</span>

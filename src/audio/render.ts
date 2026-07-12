@@ -61,6 +61,10 @@ type OffTrack = {
   sendB: Tone.Gain
   loopLen: number
   envEntries: [string, { t: number; v: number }[]][] | null
+  // arrangement-scope track automation (absolute song ticks), mirrors the live
+  // engine's autoEntriesOf; null on scene renders (those use clip envelopes)
+  autoEntries: [string, { t: number; v: number }[]][] | null
+  fbGain: Tone.Gain | null   // Feedback bus self-send loop gain (send||F target)
   // live MIDI-fx modulation (LFO/macro → arp/chord/…): the same override + Part
   // regeneration the live engine does, so bounces match playback.
   midiParts: { part: Tone.Part; rebuild: () => void }[]
@@ -182,6 +186,7 @@ function buildOffTrack(t: TrackJSON, master: Tone.Volume, returnInputs: Tone.Ton
   }
   return {
     json: t, inst, fx, panner, vol, sendA, sendB, loopLen: BAR, envEntries: null,
+    autoEntries: null, fbGain: null,
     midiParts: [], midiMod: new Map(), midiQuant: new Map(), midiDirty: false, midiRebuildAt: 0,
     lfoPhase: new Map(), lfoRateMod: new Map(), lfoLastTime: 0,
   }
@@ -202,6 +207,14 @@ function resolveTarget(ot: OffTrack, dest: string, fxId: string, pkey: string) {
     return { spec, base, setter: (v: number) => { if (pkey === 'gain') ot.vol.volume.value = v; else ot.panner.pan.value = v } }
   }
   if (dest === 'send') {
+    if (pkey === 'F') {
+      // Feedback bus self-send (loop gain) — created in the bus-routing block
+      if (!ot.fbGain) return null
+      const base = ot.json.sends?.[ot.json.id ?? ot.json.name] ?? 0.3
+      const spec = { key: 'send', label: 'Feedback send', min: 0, max: 0.95, def: 0.3 } as any
+      const fb = ot.fbGain
+      return { spec, base, setter: (v: number) => { fb.gain.value = v } }
+    }
     const node = pkey === 'B' ? ot.sendB : ot.sendA
     const base = (pkey === 'B' ? ot.json.sendB : ot.json.sendA) ?? 0
     const spec = { key: 'send', label: 'Send', min: 0, max: 1, def: 0 } as any
@@ -270,6 +283,13 @@ function applyMod(ot: OffTrack, posTicks: number, audioTime: number, bpm: number
       const [dest, fxId, pkey] = k.split('|')
       controlled.set(k, { dest, fxId: fxId || '', pkey })
     }
+  }
+
+  // arrangement-scope track automation (timeline lanes) — absolute song ticks
+  if (ot.autoEntries) for (const [k, pts] of ot.autoEntries) {
+    autoNorm.set(k, envValueAt(pts, posTicks, 0))
+    const [dest, fxId, pkey] = k.split('|')
+    controlled.set(k, { dest, fxId: fxId || '', pkey })
   }
 
   // per-frame delta for free-LFO phase integration (a synced target keeps its
@@ -425,6 +445,12 @@ async function renderBuffer(
       const ot = buildOffTrack(t, master, returnInputs, toMaster, legacyAB)
       offTracks.push(ot)
       t.fx.forEach(f => { if (f.on) { const bf = ot.fx.find(x => x.id === (f.id || f.type)); if (bf) wireDuck(f, bf.dev) } })
+      // arrangement/loop bounces apply the track's timeline automation lanes
+      // (absolute song ticks — mirrors the live engine's arr-mode behavior)
+      if (scope.kind !== 'scene' && t.auto) {
+        const entries = Object.entries(t.auto).filter(([, pts]) => pts && pts.length)
+        if (entries.length) ot.autoEntries = entries
+      }
 
       const isDrum = t.kind === 'drum'
       // keep the id so live MIDI-fx overrides (LFO/macro → arp/chord/…) can be
@@ -533,20 +559,20 @@ async function renderBuffer(
       })
       // 2) per-track (and per-bus) sends → bus inputs
       offTracks.forEach(ot => {
+        // Feedback bus: its self-loop path (vol → short delay → gain → own input)
+        // is built even at level 0 — like the live engine's always-present fbSend
+        // node — so a "Feedback send" automation lane can open the loop mid-song.
+        if (ot.json.send === 'F') {
+          const level = ot.json.sends?.[idOf(ot)] ?? 0.3
+          const d = new Tone.Delay({ delayTime: 0.09, maxDelay: 1 })
+          const g = new Tone.Gain(level)
+          Tone.connect(ot.vol, d); Tone.connect(d, g); Tone.connect(g, ot.inst.out)
+          ot.fbGain = g   // exposes the loop level to automation (send||F)
+        }
         const sends = ot.json.sends
         if (!sends) return
         for (const [bid, level] of Object.entries(sends)) {
-          if (!level) continue
-          if (bid === idOf(ot)) {
-            // Feedback bus loops into itself through a short delay (mirrors the
-            // live engine); other self-sends are skipped as before.
-            if (ot.json.send === 'F') {
-              const d = new Tone.Delay({ delayTime: 0.09, maxDelay: 1 })
-              const g = new Tone.Gain(level)
-              Tone.connect(ot.vol, d); Tone.connect(d, g); Tone.connect(g, ot.inst.out)
-            }
-            continue
-          }
+          if (!level || bid === idOf(ot)) continue   // self-loop handled above
           const inp = busInputOf(bid)
           if (!inp) continue
           const g = new Tone.Gain(level)

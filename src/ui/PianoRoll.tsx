@@ -49,19 +49,23 @@ function clipPlayFraction(selClip: any, clipMap: Y.Map<any>): number | null {
   return null
 }
 
-function StepGrid({ clipMap, trackId, selClip }: { clipMap: Y.Map<any>; trackId: string | null; selClip: any }) {
+function StepGrid({ clipMap, trackId, selClip, step }: { clipMap: Y.Map<any>; trackId: string | null; selClip: any; step: number }) {
   const len = clipMap.get('len') ?? BAR
-  const nSteps = Math.min(64, Math.max(4, Math.round(len / STEP16)))
-  // beat/bar shading follows the meter (16th-note steps per beat / per bar)
-  const stepsPerBeat = Math.max(1, Math.round(beatTicks() / STEP16))
-  const stepsPerBar = Math.max(1, Math.round(barTicks() / STEP16))
+  // One cell per grid step at the selected resolution (1/8, 1/16, 1/32, triplets…).
+  // Show the WHOLE loop — up to 16 bars; a hard cap keeps a fine grid over a long
+  // loop from exploding the DOM. Long grids scroll horizontally; the pad names
+  // stay pinned (sticky) so you always know which row you're editing.
+  const nSteps = Math.min(512, Math.max(4, Math.round(len / step)))
+  // beat/bar shading follows the meter (grid steps per beat / per bar)
+  const stepsPerBeat = Math.max(1, Math.round(beatTicks() / step))
+  const stepsPerBar = Math.max(1, Math.round(barTicks() / step))
   const notes = notesOf(clipMap)
-  const at = (pad: number, step: number) =>
-    notes.find(([, n]) => n.p === pad && Math.round(n.s / STEP16) === step)
-  const toggle = (pad: number, step: number) => {
-    const hit = at(pad, step)
+  const at = (pad: number, s: number) =>
+    notes.find(([, n]) => n.p === pad && Math.round(n.s / step) === s)
+  const toggle = (pad: number, s: number) => {
+    const hit = at(pad, s)
     if (hit) deleteNotes(clipMap, [hit[0]], 'Clear step')
-    else { addNote(clipMap, { p: pad, s: step * STEP16, d: STEP16, v: ui.velo, pr: ui.drawProb }, 'Add step'); engine.previewOn(trackId, pad, ui.velo) }
+    else { addNote(clipMap, { p: pad, s: s * step, d: step, v: ui.velo, pr: ui.drawProb }, 'Add step'); engine.previewOn(trackId, pad, ui.velo) }
   }
 
   // Sweeping playhead: a vertical line moved each frame across the cells region,
@@ -1077,7 +1081,7 @@ export function PianoRoll() {
       </div>
       <div className="roll-canvas-box" ref={boxRef}>
         {isDrum && stepView
-          ? <StepGrid clipMap={clipMap} trackId={trackId} selClip={selClip} />
+          ? <StepGrid clipMap={clipMap} trackId={trackId} selClip={selClip} step={gridTicks} />
           : <canvas
               ref={canvasRef}
               onPointerDown={onPointerDown}

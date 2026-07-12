@@ -1087,10 +1087,10 @@ export function addBusTrack(name: string, color: number): string {
   })
 }
 
-export function createAudioClip(trackId: string, sceneId: string, sampleId: string, sampleName: string, durTicks: number, color: number): ClipRef {
+export function createAudioClip(trackId: string, sceneId: string, sampleId: string, sampleName: string, durTicks: number, color: number, audioOverrides: Record<string, number> = {}): ClipRef {
   const m = jsonToClipMap({
     name: sampleName, color, len: durTicks, notes: {},
-    audio: { sampleId, sampleName, gainDb: 0, pitch: 0, rev: 0, loop: 1, fadeIn: 0, fadeOut: 0, offset: 0, dur: 0, cents: 0, xfade: 0 },
+    audio: { sampleId, sampleName, gainDb: 0, pitch: 0, rev: 0, loop: 1, fadeIn: 0, fadeOut: 0, offset: 0, dur: 0, cents: 0, xfade: 0, ...audioOverrides },
   })
   mutate('Add audio clip', () => clips.set(clipKey(trackId, sceneId), m))
   return { kind: 'session', trackId, sceneId }

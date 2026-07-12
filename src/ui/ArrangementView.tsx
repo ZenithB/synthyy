@@ -21,6 +21,7 @@ import { useY, useRaf, edgeScrollVelocity } from './hooks'
 import { openMenu, ColorRow, MenuItem, capturePointer, Knob, HFader, InlineRename, beginVDrag } from './widgets'
 import { selectClip, trackHeaderMenu, assignKitToTrack, addSampleToArr, copyArrSelection, hasArrClipboard, pasteArrClipboard, splitArrClipAt, addSynthTrack, addDrumTrack, addAudio, addBus } from './actions'
 import { Icon } from './icons'
+import { TrackInput } from './TrackInput'
 import { peersList, subscribeAwareness, awarenessVersion } from '../state/net'
 import { MIDI_LOOPS, PROGRESSIONS, progressionClip, clipInKey } from '../packs'
 import { loadLoop } from './actions'
@@ -758,14 +759,15 @@ export function ArrangementView() {
                   </div>
                   <div className="arr-head-mix" onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
                     {isMaster
-                      ? <HFader value={meta.get('masterGain') ?? 0} onChange={v => setMetaField('Master volume', 'masterGain', v)} />
+                      ? <HFader value={meta.get('masterGain') ?? 0} onChange={v => setMetaField('Master volume', 'masterGain', v)} getDb={() => engine.masterDb()} />
                       : (
                         <>
-                          <HFader value={r.track!.get('gain') ?? 0} onChange={v => setTrackMix(tid, { gain: v })} />
+                          <HFader value={r.track!.get('gain') ?? 0} onChange={v => setTrackMix(tid, { gain: v })} getDb={() => engine.meterDb(tid)} />
                           <Knob spec={PAN_SPEC} value={r.track!.get('pan') ?? 0} onChange={v => setTrackMix(tid, { pan: v })} size={20} />
                         </>
                       )}
                   </div>
+                  {r.kind === 'audio' && <TrackInput trackId={tid} />}
                   <button className={`arr-auto-toggle ${autoOpen ? 'on' : ''}`}
                     data-info="Show/hide this row's automation lane"
                     onClick={e => { e.stopPropagation(); setAutoOpen(tid, !autoOpen) }}>

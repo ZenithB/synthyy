@@ -472,6 +472,12 @@ class Engine {
     this.limiter.connect(Tone.getDestination())
     this.captureTap = new Tone.Gain(1)
     this.limiter.connect(this.captureTap)
+    // The mbcomp worklet module MUST be registered before ANY chain builds: an
+    // mbcomp constructed pre-registration silently degrades to a passthrough
+    // Gain, and the master chain (unlike tracks, rebuilt on every edit) would
+    // stay a passthrough until some bypass toggle forced a rebuild — the
+    // "master effects don't work until I bypass something" session-start bug.
+    await this.ensureMbWorklet()
     this.masterChainOut = this.master
     this.buildMasterFx()
     masterFx.observeDeep(this.onMasterFxDeep)
@@ -561,6 +567,14 @@ class Engine {
       return { spec, base, setter }
     }
     if (dest === 'send') {
+      if (pkey === 'F') {
+        // Feedback bus self-send (the ↺ loop level) — only exists on the F bus
+        const fb = rec.fbSend
+        if (!fb) return null
+        const base = (t.get('sends') as Y.Map<number> | undefined)?.get(t.get('id')) ?? 0.3
+        const spec = { key: 'send', label: 'Feedback send', min: 0, max: 0.95, def: 0.3 } as any
+        return { spec, base, setter: (v: number) => fb.gain.rampTo(v, 0.02) }
+      }
       const node = pkey === 'B' ? rec.sendB : rec.sendA
       const base = (t.get(pkey === 'B' ? 'sendB' : 'sendA') as number) ?? 0
       const spec = { key: 'send', label: 'Send', min: 0, max: 1, def: 0 } as any

@@ -27,6 +27,8 @@ export function autoTargets(trackId: string | null): AutoTarget[] {
   const out: AutoTarget[] = []
   out.push({ key: 'mix||gain', label: 'Volume' }, { key: 'mix||pan', label: 'Pan' })
   out.push({ key: 'send||A', label: 'Send A' }, { key: 'send||B', label: 'Send B' })
+  // the Feedback bus's locked self-send (the ↺ loop level) is automatable
+  if (t.get('send') === 'F') out.push({ key: 'send||F', label: 'Feedback send' })
   if (t.get('kind') !== 'drum' && t.get('kind') !== 'bus' && t.get('kind') !== 'audio') {
     instSchema(t.get('inst').get('type')).params.filter(p => !p.steps).forEach(p =>
       out.push({ key: `inst||${p.key}`, label: `Inst · ${p.label}` }))
@@ -57,6 +59,13 @@ export function paramSpecAndValue(trackId: string, key: string): { spec: ParamSp
     return { spec, value: (t.get(pkey) as number) ?? spec.def }
   }
   if (dest === 'send') {
+    if (pkey === 'F') {
+      // Feedback bus self-send — range/default mirror the ↺ Feedback knob
+      return {
+        spec: { ...SEND_SPEC('Feedback send'), max: 0.95, def: 0.3 },
+        value: ((t.get('sends') as Y.Map<number> | undefined)?.get(trackId) as number) ?? 0.3,
+      }
+    }
     return { spec: SEND_SPEC(pkey === 'B' ? 'Send B' : 'Send A'), value: (t.get(pkey === 'B' ? 'sendB' : 'sendA') as number) ?? 0 }
   }
   if (dest === 'inst') {

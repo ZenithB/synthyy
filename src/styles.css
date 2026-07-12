@@ -233,6 +233,9 @@ button { cursor: pointer; background: none; border: none; }
 .hfader { position: relative; height: 8px; background: var(--bg0); border: 1px solid var(--border); border-radius: 5px; cursor: ew-resize; overflow: hidden; flex: 1; min-width: 44px; }
 .hfader-fill { position: absolute; top: 0; bottom: 0; left: 0; background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .hfader-handle { position: absolute; top: 1px; bottom: 1px; width: 5px; background: var(--text); border-radius: 2px; }
+/* live level meter behind the value fill — the slider doubles as a meter */
+.hfader.metered { height: 11px; }
+.hfader-meter { position: absolute; top: 0; bottom: 0; left: 0; width: 0; opacity: 0.5; pointer-events: none; }
 .meter { width: 7px; background: var(--bg0); border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
 .meter-fill { position: absolute; bottom: 0; left: 0; right: 0; background: var(--ok); transition: background 0.1s; }
 
@@ -689,8 +692,11 @@ button { cursor: pointer; background: none; border: none; }
 .step-grid { height: 100%; overflow: auto; padding: 6px 8px; display: flex; flex-direction: column; gap: 3px; position: relative; }
 /* sweeping playhead over the step cells (moved per-frame via translateX) */
 .step-playhead { position: absolute; top: 4px; bottom: 4px; left: 0; width: 2px; background: var(--playhead); box-shadow: 0 0 6px var(--playhead); pointer-events: none; z-index: 4; will-change: transform; }
-.step-row { display: flex; align-items: center; gap: 6px; }
-.step-pad { width: 56px; flex-shrink: 0; text-align: left; font-size: 11px; color: var(--dim); padding: 4px 2px; border-radius: 4px; }
+/* width: max-content lets long loops extend the row's real box past the panel
+   (so the sticky pad label has the full row to stick within — sticky can't
+   escape its parent's box); min-width keeps short grids filling the panel. */
+.step-row { display: flex; align-items: center; gap: 6px; width: max-content; min-width: 100%; }
+.step-pad { width: 56px; flex-shrink: 0; text-align: left; font-size: 11px; color: var(--dim); padding: 4px 2px; border-radius: 4px; position: sticky; left: 0; z-index: 2; background: var(--bg0); }
 .step-pad:hover { color: var(--text); background: var(--bg2); }
 .step-cells { display: flex; gap: 3px; flex: 1; }
 .step-cell { flex: 1; min-width: 16px; height: 26px; border-radius: 3px; background: var(--bg2); border: 1px solid var(--border); }
@@ -807,3 +813,11 @@ body.drag-audio::after {
 .rate-ctl { display: flex; flex-direction: column; align-items: center; gap: 1px; }
 .rate-ctl .rate-mode { font-size: 8.5px; padding: 0 5px; line-height: 13px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg2); color: var(--accent); letter-spacing: 0.4px; text-transform: uppercase; }
 .rate-ctl .rate-mode:hover { background: var(--bg3); }
+
+/* audio-track input picker + record button (session + arrange track heads) */
+.track-input { display: flex; align-items: center; gap: 4px; padding: 4px 4px 0; }
+.track-input .input-select { flex: 1; min-width: 0; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 10px; padding: 2px 3px; max-width: 108px; }
+.track-input .track-rec { padding: 3px 5px; }
+.track-input .track-rec.on { color: #fff; background: var(--danger); border-color: var(--danger); animation: pulse 1.2s infinite; }
+.arr-head .track-input { padding: 3px 0 0; }
+.arr-head .track-input .input-select { max-width: 96px; }
