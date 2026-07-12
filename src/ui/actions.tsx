@@ -297,7 +297,8 @@ export function addAudio(): string {
 // drops it as an audio clip — at the playhead in Arrangement, or into a scene
 // slot in Session. State is local (one recording at a time); the UI polls
 // isTrackRecording to light the button.
-let activeRec: { trackId: string; stop: () => Promise<{ id: string; name: string; durationSec: number } | null> } | null = null
+type ActiveRec = { trackId: string; startTick: number; arr: boolean; sceneId: string | null; stop: () => Promise<import('../audio/samples').InputRecording | null> }
+let activeRec: ActiveRec | null = null
 const recListeners = new Set<() => void>()
 export function subscribeRec(fn: () => void) { recListeners.add(fn); return () => { recListeners.delete(fn) } }
 export function isTrackRecording(trackId: string) { return activeRec?.trackId === trackId }
@@ -313,6 +314,17 @@ function targetScene(trackId: string): string | null {
   return (empty ?? list[0])?.get('id') ?? null
 }
 
+/** Round-trip record latency to trim off the front of a take (seconds). A mic
+ *  overdub lands late by (monitor output latency + input capture latency): the
+ *  performer hears the click late and plays late, then the ADC delays it again.
+ *  Input latency is used when the browser reports it, else estimated from the
+ *  (symmetric) output buffer. Clamped so a bogus value can't gut the take. */
+export function recordLatencySec(inputLatencySec: number): number {
+  const outSec = engine.outputLatencyMs() / 1000
+  const inSec = inputLatencySec > 0 ? inputLatencySec : outSec
+  return clamp(outSec + inSec, 0, 0.3)
+}
+
 export async function toggleTrackRecord(trackId: string) {
   // stop the in-progress recording (this or another track) → finalize + place
   if (activeRec) {
@@ -320,15 +332,27 @@ export async function toggleTrackRecord(trackId: string) {
     activeRec = null; emitRec()
     const res = await rec.stop()
     if (!res) { toast('Recording failed'); return }
-    const t = trackById(rec.trackId)
     const name = `Rec ${res.name.replace(/^Rec /, '')}`
-    if (ui.view === 'arr') {
-      addSampleToArr(rec.trackId, Math.round(engine.arrSeekTicks), res.id, name)
-    } else {
-      const sid = targetScene(rec.trackId)
-      if (sid) { placeSampleInSlot(rec.trackId, sid, res.id, name); toast('Recorded to clip') }
+    const color = trackById(rec.trackId)?.get('color') ?? 5
+    // Latency compensation: skip the first `lat` seconds of the take (audio.offset)
+    // so the performance lands where the performer meant it, and anchor the clip
+    // to where capture actually began (rec.startTick, taken AFTER getUserMedia
+    // resolved so the device-open delay isn't baked in).
+    const lat = recordLatencySec(res.inputLatencySec)
+    const bpm = meta.get('bpm') ?? 120
+    const bodySec = Math.max(0.05, res.durationSec - lat)
+    const lenTicks = Math.max(BAR / 8, Math.round(bodySec * (bpm / 60) * 96))
+    const audio = { offset: lat, dur: 0 }   // dur 0 = play offset → end of the take
+    if (rec.arr) {
+      addArrClip(rec.trackId, Math.max(0, Math.round(rec.startTick)), {
+        name, color, len: lenTicks, notes: {},
+        audio: { sampleId: res.id, sampleName: name, gainDb: 0, pitch: 0, rev: 0, loop: 0, fadeIn: 0, fadeOut: 0, cents: 0, xfade: 0, ...audio },
+      }, 'Record to arrangement')
+      toast('Recorded to arrangement')
+    } else if (rec.sceneId) {
+      createAudioClip(rec.trackId, rec.sceneId, res.id, name, lenTicks, color, audio)
+      toast('Recorded to clip')
     }
-    void t
     return
   }
   const t = trackById(trackId)
@@ -336,7 +360,14 @@ export async function toggleTrackRecord(trackId: string) {
   try {
     const handle = await startInputRecording(trackInput(trackId))
     if (!handle) { toast('Could not open the input'); return }
-    activeRec = { trackId, stop: handle.stop }
+    // Anchor NOW — after the mic actually opened — so capture-offset 0 maps to
+    // this transport tick (the getUserMedia setup delay is already elapsed).
+    const arrMode = ui.view === 'arr'
+    activeRec = {
+      trackId, stop: handle.stop, arr: arrMode,
+      startTick: engine.playing ? engine.positionTicks() : engine.arrSeekTicks,
+      sceneId: arrMode ? null : targetScene(trackId),
+    }
     emitRec()
     toast('Recording… click again to stop')
   } catch {

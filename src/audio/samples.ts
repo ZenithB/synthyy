@@ -368,11 +368,17 @@ export async function startSampleRecording() {
 
 /** Record from a specific input device into the bank (for audio-track capture).
  *  deviceId '' = the system default input. Returns a handle you stop() to finalize. */
-export async function startInputRecording(deviceId: string): Promise<{ stop: () => Promise<{ id: string; name: string; durationSec: number } | null> } | null> {
+export type InputRecording = { id: string; name: string; durationSec: number; inputLatencySec: number }
+export async function startInputRecording(deviceId: string): Promise<{ stop: () => Promise<InputRecording | null> } | null> {
   const constraint: MediaTrackConstraints = deviceId ? { deviceId: { exact: deviceId } } : {}
   // record clean: no processing that would fight a musical input
   const audio: MediaStreamConstraints['audio'] = { ...constraint, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
   const s = await navigator.mediaDevices.getUserMedia({ audio })
+  // capture (ADC + input-buffer) latency for record compensation — reported in
+  // seconds when the browser knows it, otherwise 0 (the caller falls back to an
+  // estimate from the output latency).
+  const settings = (s.getAudioTracks()[0]?.getSettings?.() ?? {}) as { latency?: number }
+  const inputLatencySec = typeof settings.latency === 'number' ? settings.latency : 0
   const chunkList: Blob[] = []
   const r = new MediaRecorder(s)
   const startedAt = performance.now()
@@ -388,7 +394,7 @@ export async function startInputRecording(deviceId: string): Promise<{ stop: () 
           const bytes = await blob.arrayBuffer()
           const stamp = new Date().toISOString().slice(11, 19)
           const rec = await store(`Rec ${stamp}`, bytes, 'Recordings')
-          resolve({ ...rec, durationSec })
+          resolve({ ...rec, durationSec, inputLatencySec })
         } catch { resolve(null) }
       }
       try { r.stop() } catch { resolve(null) }
