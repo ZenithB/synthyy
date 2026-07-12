@@ -144,10 +144,27 @@ export function Fader({ value, min = -48, max = 6, onChange, height = 76 }: {
   )
 }
 
+// Live horizontal level meter overlaid inside an HFader — a colored fill that
+// tracks dB in real time, so the volume slider visually doubles as a meter
+// (matching the Session-view fader + meter). 30Hz, like MeterBar.
+function HFaderMeter({ getDb }: { getDb: () => number }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useRaf(() => {
+    const db = getDb()
+    const norm = clamp((db + 60) / 66, 0, 1)
+    if (ref.current) {
+      ref.current.style.width = `${norm * 100}%`
+      ref.current.style.background = db > -3 ? 'var(--danger)' : db > -10 ? 'var(--warn)' : 'var(--ok)'
+    }
+  }, true, 2)
+  return <div ref={ref} className="hfader-meter" />
+}
+
 // Horizontal sibling of Fader — for narrow track heads where a vertical fader
 // won't fit. Same dB range/snap and the same window-level drag handling.
-export function HFader({ value, min = -48, max = 6, onChange, width = 100 }: {
-  value: number; min?: number; max?: number; onChange: (v: number) => void; width?: number
+// Pass `getDb` to overlay a live level meter (the slider doubles as a meter).
+export function HFader({ value, min = -48, max = 6, onChange, width = 100, getDb }: {
+  value: number; min?: number; max?: number; onChange: (v: number) => void; width?: number; getDb?: () => number
 }) {
   const norm = clamp((value - min) / (max - min), 0, 1)
   const ref = useRef<HTMLDivElement>(null)
@@ -163,8 +180,9 @@ export function HFader({ value, min = -48, max = 6, onChange, width = 100 }: {
     beginVDrag(apply)
   }
   return (
-    <div ref={ref} className="hfader" style={{ width }} onPointerDown={drag}
+    <div ref={ref} className={`hfader ${getDb ? 'metered' : ''}`} style={{ width }} onPointerDown={drag}
       onDoubleClick={e => { e.stopPropagation(); onChange(0) }} data-info="Track volume (dB). Drag left/right; double-click resets to 0">
+      {getDb && <HFaderMeter getDb={getDb} />}
       <div className="hfader-fill" style={{ width: `${norm * 100}%` }} />
       <div className="hfader-handle" style={{ left: `calc(${norm * 100}% - 3px)` }} />
     </div>

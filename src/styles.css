@@ -233,6 +233,9 @@ button { cursor: pointer; background: none; border: none; }
 .hfader { position: relative; height: 8px; background: var(--bg0); border: 1px solid var(--border); border-radius: 5px; cursor: ew-resize; overflow: hidden; flex: 1; min-width: 44px; }
 .hfader-fill { position: absolute; top: 0; bottom: 0; left: 0; background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .hfader-handle { position: absolute; top: 1px; bottom: 1px; width: 5px; background: var(--text); border-radius: 2px; }
+/* live level meter behind the value fill — the slider doubles as a meter */
+.hfader.metered { height: 11px; }
+.hfader-meter { position: absolute; top: 0; bottom: 0; left: 0; width: 0; opacity: 0.5; pointer-events: none; }
 .meter { width: 7px; background: var(--bg0); border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
 .meter-fill { position: absolute; bottom: 0; left: 0; right: 0; background: var(--ok); transition: background 0.1s; }
 
