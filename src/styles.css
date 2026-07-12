@@ -813,3 +813,11 @@ body.drag-audio::after {
 .rate-ctl { display: flex; flex-direction: column; align-items: center; gap: 1px; }
 .rate-ctl .rate-mode { font-size: 8.5px; padding: 0 5px; line-height: 13px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg2); color: var(--accent); letter-spacing: 0.4px; text-transform: uppercase; }
 .rate-ctl .rate-mode:hover { background: var(--bg3); }
+
+/* audio-track input picker + record button (session + arrange track heads) */
+.track-input { display: flex; align-items: center; gap: 4px; padding: 4px 4px 0; }
+.track-input .input-select { flex: 1; min-width: 0; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 10px; padding: 2px 3px; max-width: 108px; }
+.track-input .track-rec { padding: 3px 5px; }
+.track-input .track-rec.on { color: #fff; background: var(--danger); border-color: var(--danger); animation: pulse 1.2s infinite; }
+.arr-head .track-input { padding: 3px 0 0; }
+.arr-head .track-input .input-select { max-width: 96px; }

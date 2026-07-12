@@ -15,7 +15,8 @@ import { setUI, toast, ui } from '../state/store'
 import { setPresence } from '../state/net'
 import { engine } from '../audio/engine'
 import { meta } from '../state/doc'
-import { getSampleBuffer, importSampleFilesBulk, looksLikeAudio } from '../audio/samples'
+import { getSampleBuffer, importSampleFilesBulk, looksLikeAudio, startInputRecording } from '../audio/samples'
+import { trackInput } from '../state/inputs'
 import { DRUM_PACKS, packSampleId, ROLE_LABEL, RoleName } from '../audio/drumpacks'
 import { DEFAULT_PROJECT, demoProject, DRUM_KITS, InstPreset, MidiLoop, Progression, progressionClip, clipInKey } from '../packs'
 
@@ -289,6 +290,58 @@ export function addAudio(): string {
   const id = addAudioTrack(`Audio ${n}`, nextColor())
   selectTrack(id)
   return id
+}
+
+// ---- audio-track input recording ----
+// Records live audio from the track's selected input device into the bank, then
+// drops it as an audio clip — at the playhead in Arrangement, or into a scene
+// slot in Session. State is local (one recording at a time); the UI polls
+// isTrackRecording to light the button.
+let activeRec: { trackId: string; stop: () => Promise<{ id: string; name: string; durationSec: number } | null> } | null = null
+const recListeners = new Set<() => void>()
+export function subscribeRec(fn: () => void) { recListeners.add(fn); return () => { recListeners.delete(fn) } }
+export function isTrackRecording(trackId: string) { return activeRec?.trackId === trackId }
+const emitRec = () => recListeners.forEach(l => l())
+
+/** Which session scene a recording lands in: the selected clip's scene if it's
+ *  on this track, else the first empty slot, else the first scene. */
+function targetScene(trackId: string): string | null {
+  const sel = ui.selClip
+  if (sel?.kind === 'session' && sel.trackId === trackId) return sel.sceneId
+  const list = scenes.toArray()
+  const empty = list.find(s => !clips.get(clipKey(trackId, s.get('id'))))
+  return (empty ?? list[0])?.get('id') ?? null
+}
+
+export async function toggleTrackRecord(trackId: string) {
+  // stop the in-progress recording (this or another track) → finalize + place
+  if (activeRec) {
+    const rec = activeRec
+    activeRec = null; emitRec()
+    const res = await rec.stop()
+    if (!res) { toast('Recording failed'); return }
+    const t = trackById(rec.trackId)
+    const name = `Rec ${res.name.replace(/^Rec /, '')}`
+    if (ui.view === 'arr') {
+      addSampleToArr(rec.trackId, Math.round(engine.arrSeekTicks), res.id, name)
+    } else {
+      const sid = targetScene(rec.trackId)
+      if (sid) { placeSampleInSlot(rec.trackId, sid, res.id, name); toast('Recorded to clip') }
+    }
+    void t
+    return
+  }
+  const t = trackById(trackId)
+  if (!t || t.get('kind') !== 'audio') { toast('Recording is for audio tracks'); return }
+  try {
+    const handle = await startInputRecording(trackInput(trackId))
+    if (!handle) { toast('Could not open the input'); return }
+    activeRec = { trackId, stop: handle.stop }
+    emitRec()
+    toast('Recording… click again to stop')
+  } catch {
+    toast('Microphone/input permission denied')
+  }
 }
 
 export function addBus(): string {

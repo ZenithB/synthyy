@@ -21,6 +21,7 @@ import { useY, useRaf, edgeScrollVelocity } from './hooks'
 import { openMenu, ColorRow, MenuItem, capturePointer, Knob, HFader, InlineRename, beginVDrag } from './widgets'
 import { selectClip, trackHeaderMenu, assignKitToTrack, addSampleToArr, copyArrSelection, hasArrClipboard, pasteArrClipboard, splitArrClipAt, addSynthTrack, addDrumTrack, addAudio, addBus } from './actions'
 import { Icon } from './icons'
+import { TrackInput } from './TrackInput'
 import { peersList, subscribeAwareness, awarenessVersion } from '../state/net'
 import { MIDI_LOOPS, PROGRESSIONS, progressionClip, clipInKey } from '../packs'
 import { loadLoop } from './actions'
@@ -766,6 +767,7 @@ export function ArrangementView() {
                         </>
                       )}
                   </div>
+                  {r.kind === 'audio' && <TrackInput trackId={tid} />}
                   <button className={`arr-auto-toggle ${autoOpen ? 'on' : ''}`}
                     data-info="Show/hide this row's automation lane"
                     onClick={e => { e.stopPropagation(); setAutoOpen(tid, !autoOpen) }}>

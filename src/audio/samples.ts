@@ -366,6 +366,36 @@ export async function startSampleRecording() {
   rec.start()
 }
 
+/** Record from a specific input device into the bank (for audio-track capture).
+ *  deviceId '' = the system default input. Returns a handle you stop() to finalize. */
+export async function startInputRecording(deviceId: string): Promise<{ stop: () => Promise<{ id: string; name: string; durationSec: number } | null> } | null> {
+  const constraint: MediaTrackConstraints = deviceId ? { deviceId: { exact: deviceId } } : {}
+  // record clean: no processing that would fight a musical input
+  const audio: MediaStreamConstraints['audio'] = { ...constraint, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+  const s = await navigator.mediaDevices.getUserMedia({ audio })
+  const chunkList: Blob[] = []
+  const r = new MediaRecorder(s)
+  const startedAt = performance.now()
+  r.ondataavailable = e => { if (e.data.size) chunkList.push(e.data) }
+  r.start()
+  return {
+    stop: () => new Promise(resolve => {
+      r.onstop = async () => {
+        const durationSec = (performance.now() - startedAt) / 1000
+        const blob = new Blob(chunkList, { type: r.mimeType || 'audio/webm' })
+        s.getTracks().forEach(t => t.stop())
+        try {
+          const bytes = await blob.arrayBuffer()
+          const stamp = new Date().toISOString().slice(11, 19)
+          const rec = await store(`Rec ${stamp}`, bytes, 'Recordings')
+          resolve({ ...rec, durationSec })
+        } catch { resolve(null) }
+      }
+      try { r.stop() } catch { resolve(null) }
+    }),
+  }
+}
+
 export async function stopSampleRecording(): Promise<{ id: string; name: string } | null> {
   if (!rec) return null
   const r = rec
