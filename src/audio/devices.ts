@@ -934,17 +934,11 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'chorus': {
-      const wn = fxWorkletNode('sf-chorus', { depth: p.depth ?? 0.7, mix: p.mix ?? 0 })
-      if (wn) {
-        const wrate = makeRate(p, hz => wn.port.postMessage({ k: 'hz', v: hz }))
-        wn.port.postMessage({ k: 'hz', v: wrate.hz0 })
-        return {
-          node: wn as unknown as Tone.ToneAudioNode,
-          set: (k, v) => { if (!wrate.set(k, v)) wn.port.postMessage({ k, v }) },
-          dispose: () => { wrate.dispose(); try { wn.disconnect() } catch { /* ok */ } },
-        }
-      }
-      // fallback: the original Tone composite (worklet module unavailable)
+      // Deliberately the Tone composite, NOT an sf-fx worklet: a worklet port
+      // was tried and reverted — even a faithful reimplementation subtly shifts
+      // the sound of existing projects, and this device's character is baked
+      // into people's mixes. (Auto-Tune is worklet-based because there the
+      // change was a correctness fix.)
       const rate = makeRate(p, hz => { node.frequency.value = hz })
       const node = new Tone.Chorus({ frequency: rate.hz0, delayTime: 3, depth: p.depth, wet: p.mix })
       let depth = p.depth ?? 0, mix = p.mix ?? 0
@@ -1039,17 +1033,8 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'phaser': {
-      const wn = fxWorkletNode('sf-phaser', { octaves: p.octaves | 0, base: 350, mix: p.mix ?? 0 })
-      if (wn) {
-        const wrate = makeRate(p, hz => wn.port.postMessage({ k: 'hz', v: hz }))
-        wn.port.postMessage({ k: 'hz', v: wrate.hz0 })
-        return {
-          node: wn as unknown as Tone.ToneAudioNode,
-          set: (k, v) => { if (!wrate.set(k, v)) wn.port.postMessage({ k, v: k === 'octaves' ? v | 0 : v }) },
-          dispose: () => { wrate.dispose(); try { wn.disconnect() } catch { /* ok */ } },
-        }
-      }
-      // fallback: the original Tone composite (worklet module unavailable)
+      // Tone composite on purpose — see the chorus note above (worklet port
+      // tried and reverted for sounding different from the original device).
       const rate = makeRate(p, hz => { node.frequency.value = hz })
       const node = new Tone.Phaser({ frequency: rate.hz0, octaves: p.octaves | 0, baseFrequency: 350, wet: p.mix })
       return {

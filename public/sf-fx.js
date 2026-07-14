@@ -1,16 +1,7 @@
-// Consolidated effect worklets: chorus, phaser, pitch shifter and auto-tune as
-// single AudioWorklet nodes. Each replaces a Tone.js composite of many native
-// nodes (LFO oscillators, gains, delays, per-stage biquads, crossfades) with one
-// processor — same DSP, a fraction of the per-callback graph overhead — and,
-// unlike the Tone versions, all of them run identically inside an
+// Pitch-shifter + auto-tune AudioWorklets: each is a single node replacing a
+// Tone.js composite of many native nodes, and both run identically inside an
 // OfflineAudioContext, so exports and track freezes reproduce them exactly.
 //
-// DSP is ported from Tone.js so existing projects keep their sound:
-//  · chorus  — L/R delays modulated ±depth·delayTime by a sine LFO, 180° spread,
-//              equal-power dry/wet (Tone.Chorus, feedback 0).
-//  · phaser  — 10 all-pass biquads per channel (Q 10), centre frequency swept
-//              LINEARLY base → base·2^octaves by a sine LFO, R channel 180° out
-//              of phase (Tone.Phaser).
 //  · shifter — dual-tap "tape splice" delay: two half-window-offset taps whose
 //              delay ramps at (1−ratio), equal-power crossfaded (Tone.PitchShift
 //              topology, but with the mathematically exact ramp rate — Tone's
@@ -18,12 +9,16 @@
 //  · autotune— the same shifter core driven by an in-worklet YIN detector (the
 //              engine used to run YIN on the MAIN thread per animation frame).
 //
+// Chorus and phaser worklet ports were tried here and REVERTED: even faithful
+// reimplementations audibly shifted the sound of existing projects, so those
+// devices stay Tone composites (devices.ts). Auto-Tune kept the worklet because
+// its change was a correctness fix, not a character change.
+//
 // All processors are render-quantum-size agnostic (renderSizeHint safe).
 // Params arrive as port messages: { init: {…} } once, then { k, v } updates.
 
 'use strict'
 
-const TWO_PI = 2 * Math.PI
 // equal-power dry/wet (Tone.CrossFade): dry·cos(m·π/2) + wet·sin(m·π/2)
 function mixGains(mix) {
   const m = Math.max(0, Math.min(1, mix))
@@ -52,147 +47,6 @@ class DelayLine {
     let i1 = i0 - 1
     if (i1 < 0) i1 += this.size
     return this.buf[i0] + (this.buf[i1] - this.buf[i0]) * frac
-  }
-}
-
-// ---------------- chorus ----------------
-
-class SFChorus extends AudioWorkletProcessor {
-  constructor() {
-    super()
-    this.hz = 1.5
-    this.depth = 0.7
-    this.mix = 0.5
-    this.d0 = 0.003            // base delay (Tone device fixes delayTime at 3ms)
-    this.phase = 0
-    const max = Math.ceil(sampleRate * 0.05)
-    this.dlL = new DelayLine(max)
-    this.dlR = new DelayLine(max)
-    this.port.onmessage = e => {
-      const d = e.data
-      if (d.init) for (const k in d.init) this.set(k, d.init[k])
-      else this.set(d.k, d.v)
-    }
-  }
-  set(k, v) {
-    if (k === 'hz') this.hz = v
-    else if (k === 'depth') this.depth = v
-    else if (k === 'mix') this.mix = v
-  }
-  process(inputs, outputs) {
-    const output = outputs[0]
-    if (!output) return true
-    const outL = output[0], outR = output[1] || output[0]
-    const n = outL.length
-    const input = inputs[0]
-    const inL = input && input[0], inR = (input && (input[1] || input[0]))
-    const [dry, wet] = mixGains(this.mix)
-    const d0s = this.d0 * sampleRate
-    const dev = d0s * this.depth
-    const inc = this.hz / sampleRate
-    let ph = this.phase
-    for (let i = 0; i < n; i++) {
-      const xl = inL ? inL[i] : 0
-      const xr = inR ? inR[i] : 0
-      this.dlL.write(xl)
-      this.dlR.write(xr)
-      const s = Math.sin(TWO_PI * ph)
-      // L and R LFOs are 180° apart (Tone.Chorus default spread)
-      const wl = this.dlL.read(Math.max(0, d0s + dev * s))
-      const wr = this.dlR.read(Math.max(0, d0s - dev * s))
-      outL[i] = xl * dry + wl * wet
-      if (outR !== outL) outR[i] = xr * dry + wr * wet
-      ph += inc
-    }
-    this.phase = ph % 1
-    return true
-  }
-}
-
-// ---------------- phaser ----------------
-
-// Direct-form-I biquad (RBJ all-pass); all 10 stages of a channel share coeffs.
-class APBiquad {
-  constructor() { this.x1 = 0; this.x2 = 0; this.y1 = 0; this.y2 = 0 }
-  proc(x, b0, b1, b2, a1, a2) {
-    const y = b0 * x + b1 * this.x1 + b2 * this.x2 - a1 * this.y1 - a2 * this.y2
-    this.x2 = this.x1; this.x1 = x
-    this.y2 = this.y1; this.y1 = y
-    return y
-  }
-}
-
-const PHASER_STAGES = 10
-const PHASER_Q = 10
-
-class SFPhaser extends AudioWorkletProcessor {
-  constructor() {
-    super()
-    this.hz = 0.5
-    this.octaves = 3
-    this.base = 350
-    this.mix = 0.5
-    this.phase = 0
-    this.st = [[], []]
-    for (let c = 0; c < 2; c++) for (let s = 0; s < PHASER_STAGES; s++) this.st[c].push(new APBiquad())
-    this.port.onmessage = e => {
-      const d = e.data
-      if (d.init) for (const k in d.init) this.set(k, d.init[k])
-      else this.set(d.k, d.v)
-    }
-  }
-  set(k, v) {
-    if (k === 'hz') this.hz = v
-    else if (k === 'octaves') this.octaves = v | 0
-    else if (k === 'base') this.base = v
-    else if (k === 'mix') this.mix = v
-  }
-  coeffs(f, out) {
-    const w0 = TWO_PI * Math.min(Math.max(10, f), sampleRate * 0.49) / sampleRate
-    const cw = Math.cos(w0)
-    const alpha = Math.sin(w0) / (2 * PHASER_Q)
-    const a0 = 1 + alpha
-    out[0] = (1 - alpha) / a0   // b0
-    out[1] = (-2 * cw) / a0     // b1
-    out[2] = (1 + alpha) / a0   // b2
-    out[3] = (-2 * cw) / a0     // a1
-    out[4] = (1 - alpha) / a0   // a2
-  }
-  process(inputs, outputs) {
-    const output = outputs[0]
-    if (!output) return true
-    const outL = output[0], outR = output[1] || output[0]
-    const n = outL.length
-    const input = inputs[0]
-    const inL = input && input[0], inR = (input && (input[1] || input[0]))
-    const [dry, wet] = mixGains(this.mix)
-    const top = this.base * Math.pow(2, this.octaves)
-    const cl = this.cl || (this.cl = new Float64Array(5))
-    const cr = this.cr || (this.cr = new Float64Array(5))
-    // sweep updated per ≤128-sample chunk so bigger render quanta stay smooth
-    for (let i0 = 0; i0 < n; i0 += 128) {
-      const i1 = Math.min(n, i0 + 128)
-      // linear frequency sweep (Tone LFO min=base, max=base·2^oct), R 180° out
-      const sL = 0.5 + 0.5 * Math.sin(TWO_PI * this.phase)
-      const sR = 0.5 + 0.5 * Math.sin(TWO_PI * this.phase + Math.PI)
-      this.coeffs(this.base + (top - this.base) * sL, cl)
-      this.coeffs(this.base + (top - this.base) * sR, cr)
-      this.phase += (this.hz / sampleRate) * (i1 - i0)
-      const stL = this.st[0], stR = this.st[1]
-      for (let i = i0; i < i1; i++) {
-        const xl = inL ? inL[i] : 0
-        const xr = inR ? inR[i] : 0
-        let l = xl, r = xr
-        for (let s = 0; s < PHASER_STAGES; s++) {
-          l = stL[s].proc(l, cl[0], cl[1], cl[2], cl[3], cl[4])
-          r = stR[s].proc(r, cr[0], cr[1], cr[2], cr[3], cr[4])
-        }
-        outL[i] = xl * dry + l * wet
-        if (outR !== outL) outR[i] = xr * dry + r * wet
-      }
-    }
-    this.phase %= 1
-    return true
   }
 }
 
@@ -410,7 +264,5 @@ class SFAutotune extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('sf-chorus', SFChorus)
-registerProcessor('sf-phaser', SFPhaser)
 registerProcessor('sf-shifter', SFShifter)
 registerProcessor('sf-autotune', SFAutotune)

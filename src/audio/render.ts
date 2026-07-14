@@ -135,7 +135,7 @@ function makeOffDevice(type: string, params: Record<string, number>): OffDevice 
 // Which worklet modules a set of fx uses → register them on the CURRENT
 // (offline) context, each capped by a timeout so a stalling addModule can
 // never deadlock the render (Tone.Offline awaits the build callback first).
-const SF_FX_TYPES = ['chorus', 'phaser', 'autotune']
+const SF_FX_TYPES = ['autotune']   // chorus/phaser reverted to Tone composites
 async function registerOfflineWorklets(project: ProjectJSON, onlyTrack?: TrackJSON) {
   const fxLists: FxJSON[][] = onlyTrack
     ? [onlyTrack.fx ?? []]
