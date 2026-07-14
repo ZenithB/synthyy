@@ -20,14 +20,18 @@ class SFLoad extends AudioWorkletProcessor {
     const o = (options && options.processorOptions) || {}
     this.reportMs = o.reportMs || 250
     this.haveClock = typeof performance !== 'undefined' && typeof performance.now === 'function'
-    this.quanta = 0
+    this.frames = 0
     this.lastT = -1
     this.maxGap = 0
     this.winT = this.haveClock ? performance.now() : 0
   }
 
-  process() {
-    this.quanta++
+  process(inputs, outputs) {
+    // count FRAMES, not callbacks — the render quantum is 128 by default but
+    // renderSizeHint (Stable buffer tier) makes it bigger, and hard-coding 128
+    // would then over/under-report how much audio was actually produced.
+    const out = outputs && outputs[0] && outputs[0][0]
+    this.frames += out ? out.length : 128
     if (this.haveClock) {
       const t = performance.now()
       if (this.lastT >= 0) {
@@ -37,17 +41,17 @@ class SFLoad extends AudioWorkletProcessor {
       this.lastT = t
       const elapsed = t - this.winT
       if (elapsed >= this.reportMs) {
-        this.port.postMessage({ clock: 1, quanta: this.quanta, winMs: elapsed, maxGapMs: this.maxGap })
-        this.quanta = 0
+        this.port.postMessage({ clock: 1, frames: this.frames, winMs: elapsed, maxGapMs: this.maxGap })
+        this.frames = 0
         this.maxGap = 0
         this.winT = t
       }
     } else {
-      // No wall clock on this thread — emit a quantum count the engine can time
+      // No wall clock on this thread — emit a frame count the engine can time
       // against its own clock (coarser; couples slightly to main-thread jank).
-      if (this.quanta >= 128) {
-        this.port.postMessage({ clock: 0, quanta: this.quanta })
-        this.quanta = 0
+      if (this.frames >= 16384) {
+        this.port.postMessage({ clock: 0, frames: this.frames })
+        this.frames = 0
       }
     }
     return true

@@ -6,9 +6,34 @@
 
 import * as Tone from 'tone'
 import { WAVES, DELAY_FRACTIONS, DUCK_DIV_TICKS, EQ7_BANDS, EQ7_FREQS, eq7BandType, rateHzOf } from './schema'
-import { snapToScale } from '../theory'
+import { snapToScale, getScale } from '../theory'
 import { meta } from '../state/doc'
 import { clamp } from '../types'
+
+/** Project scale → root-relative pitch-class bitmask (bit n = degree n allowed). */
+const scaleMask = (scaleId: string) => getScale(scaleId).ivs.reduce((m, iv) => m | (1 << (((iv % 12) + 12) % 12)), 0)
+
+/**
+ * True when an effect's params make it audibly transparent (its dry path is
+ * bit-exact passthrough), so the engine can splice it out of the live chain
+ * entirely — a wet-0 reverb still convolves, a mix-0 autotune still granulates.
+ * Only types whose neutrality is statically decidable are listed; dynamics
+ * (comp/opto/mbcomp), filter and the EQs depend on signal or are too cheap to
+ * matter, so they never report neutral.
+ */
+export function fxNeutral(type: string, p: Record<string, number>): boolean {
+  const z = (v: number | undefined) => (v ?? 0) <= 0.0001
+  switch (type) {
+    case 'delay': case 'reverb': case 'plate': case 'chorus': case 'dist':
+    case 'crush': case 'phaser': case 'pingpong': case 'autofilt': case 'trem':
+    case 'vib': case 'cheby': case 'shift': case 'autotune':
+      return z(p.mix)
+    case 'autopan': return z(p.depth)
+    case 'duck': return z(p.amount)
+    case 'widen': return Math.abs((p.width ?? 0.5) - 0.5) <= 0.0001
+    default: return false
+  }
+}
 
 // Monophonic pitch detector (YIN cumulative-mean-normalized difference) used by
 // Auto-Tune. Returns the fundamental in Hz, or 0 if no clear pitch.
@@ -812,6 +837,23 @@ class Eq7 extends Tone.ToneAudioNode {
   }
 }
 
+// Construct one of the consolidated sf-fx worklet processors (sf-chorus /
+// sf-phaser / sf-shifter / sf-autotune — see public/sf-fx.js). Returns null
+// when the module isn't registered on the current context (preload failed or
+// timed out) — callers fall back to the original Tone composite so audio never
+// breaks. Registered live by engine.doStart and per-render by render.ts.
+function fxWorkletNode(name: string, init: Record<string, number>): AudioWorkletNode | null {
+  try {
+    const ctx = Tone.getContext().rawContext as AudioContext
+    const node = new AudioWorkletNode(ctx, name, {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+      channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+    })
+    node.port.postMessage({ init })
+    return node
+  } catch { return null }
+}
+
 export function makeEffect(type: string, p: Record<string, number>): Fx {
   switch (type) {
     case 'eq': {
@@ -892,6 +934,17 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'chorus': {
+      const wn = fxWorkletNode('sf-chorus', { depth: p.depth ?? 0.7, mix: p.mix ?? 0 })
+      if (wn) {
+        const wrate = makeRate(p, hz => wn.port.postMessage({ k: 'hz', v: hz }))
+        wn.port.postMessage({ k: 'hz', v: wrate.hz0 })
+        return {
+          node: wn as unknown as Tone.ToneAudioNode,
+          set: (k, v) => { if (!wrate.set(k, v)) wn.port.postMessage({ k, v }) },
+          dispose: () => { wrate.dispose(); try { wn.disconnect() } catch { /* ok */ } },
+        }
+      }
+      // fallback: the original Tone composite (worklet module unavailable)
       const rate = makeRate(p, hz => { node.frequency.value = hz })
       const node = new Tone.Chorus({ frequency: rate.hz0, delayTime: 3, depth: p.depth, wet: p.mix })
       let depth = p.depth ?? 0, mix = p.mix ?? 0
@@ -986,6 +1039,17 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'phaser': {
+      const wn = fxWorkletNode('sf-phaser', { octaves: p.octaves | 0, base: 350, mix: p.mix ?? 0 })
+      if (wn) {
+        const wrate = makeRate(p, hz => wn.port.postMessage({ k: 'hz', v: hz }))
+        wn.port.postMessage({ k: 'hz', v: wrate.hz0 })
+        return {
+          node: wn as unknown as Tone.ToneAudioNode,
+          set: (k, v) => { if (!wrate.set(k, v)) wn.port.postMessage({ k, v: k === 'octaves' ? v | 0 : v }) },
+          dispose: () => { wrate.dispose(); try { wn.disconnect() } catch { /* ok */ } },
+        }
+      }
+      // fallback: the original Tone composite (worklet module unavailable)
       const rate = makeRate(p, hz => { node.frequency.value = hz })
       const node = new Tone.Phaser({ frequency: rate.hz0, octaves: p.octaves | 0, baseFrequency: 350, wet: p.mix })
       return {
@@ -1146,9 +1210,38 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       }
     }
     case 'autotune': {
-      // Monophonic auto-tune: detect the input pitch every frame, snap it to the
-      // project key/scale (or chromatic), and drive a granular pitch-shifter by
-      // the difference. The analyser taps the DRY input (engine wires prev→detect).
+      // Monophonic auto-tune. Preferred path: the sf-autotune worklet — YIN
+      // detection AND the pitch shifter run on the audio thread in one node
+      // (the old version burned ~1M multiply-adds per animation frame on the
+      // MAIN thread), and it works inside OfflineAudioContext, so exports and
+      // track freezes finally reproduce Auto-Tune instead of skipping it.
+      const wn = fxWorkletNode('sf-autotune', {
+        amount: p.amount ?? 1, speed: p.speed ?? 20, mix: p.mix ?? 1, mode: (p.mode ?? 0) | 0,
+        root: (meta.get('root') ?? 9) as number, mask: scaleMask((meta.get('scale') ?? 'minor') as string),
+      })
+      if (wn) {
+        // follow live project key/scale changes (offline renders fix the key
+        // at build time and never observe — the doc must not leak observers)
+        const offline = Tone.getContext().rawContext?.constructor?.name?.includes('Offline')
+        const pushKey = () => {
+          wn.port.postMessage({ k: 'root', v: (meta.get('root') ?? 9) as number })
+          wn.port.postMessage({ k: 'mask', v: scaleMask((meta.get('scale') ?? 'minor') as string) })
+        }
+        const onMeta = (ev: { keysChanged: Set<string> }) => {
+          if (ev.keysChanged.has('root') || ev.keysChanged.has('scale')) pushKey()
+        }
+        if (!offline) meta.observe(onMeta as any)
+        return {
+          node: wn as unknown as Tone.ToneAudioNode,
+          set: (k, v) => wn.port.postMessage({ k, v: k === 'mode' ? v | 0 : v }),
+          dispose: () => {
+            if (!offline) { try { meta.unobserve(onMeta as any) } catch { /* ok */ } }
+            try { wn.disconnect() } catch { /* ok */ }
+          },
+        }
+      }
+      // fallback: main-thread detector driving Tone.PitchShift (worklet unavailable).
+      // The analyser taps the DRY input (engine wires prev→detect).
       const ctx = Tone.getContext().rawContext as AudioContext
       const node = new Tone.PitchShift({ windowSize: 0.06, delayTime: 0, feedback: 0 })
       node.wet.value = p.mix ?? 1

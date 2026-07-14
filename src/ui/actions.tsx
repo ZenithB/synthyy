@@ -30,6 +30,18 @@ export function trackHeaderMenu(trackId: string, onRename: () => void, vertical 
     { label: 'Rename', fn: onRename },
     { custom: <ColorRow colors={CLIP_COLORS} onPick={i => setTrackColor(trackId, i)} /> },
   ]
+  // Freeze: bounce the track's device processing (instrument + effects) to
+  // audio and play that instead — pan/fader/sends stay live. Local to this
+  // client; any edit to the baked material unfreezes automatically.
+  if (t && t.get('kind') !== 'bus') {
+    const frozen = engine.isFrozen(trackId)
+    const busy = engine.isFreezing(trackId)
+    items.push('sep', {
+      label: busy ? '❄ Freezing…' : frozen ? '❄ Unfreeze track' : '❄ Freeze track',
+      fn: () => { if (frozen) engine.unfreezeTrack(trackId); else engine.freezeTrack(trackId) },
+      disabled: busy,
+    })
+  }
   if (!locked) {
     items.push(
       { label: 'Duplicate track', fn: () => duplicateTrack(trackId) },

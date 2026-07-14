@@ -238,6 +238,7 @@ function ClipSlot({ track, sceneId }: { track: Y.Map<any>; sceneId: string }) {
 let colClickGuard = false
 
 function TrackHeader({ track, onReorder, dragging }: { track: Y.Map<any>; onReorder?: (e: React.PointerEvent) => void; dragging?: boolean }) {
+  useEngineTick()   // freeze state lives on the engine
   const trackId = track.get('id') as string
   const isArmed = useUI(s => s.armTrackId === trackId)
   const isSel = useUI(s => s.selTrackId === trackId)
@@ -270,6 +271,10 @@ function TrackHeader({ track, onReorder, dragging }: { track: Y.Map<any>; onReor
         {renaming
           ? <InlineRename value={track.get('name')} onDone={v => { setRenaming(false); if (v) renameTrack(trackId, v) }} />
           : <span className="track-name" onDoubleClick={() => setRenaming(true)}>{track.get('name')}</span>}
+        {engine.isFrozen(trackId) && (
+          <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.85, cursor: 'default' }}
+            data-info="Frozen — device processing is bounced to audio (right-click to unfreeze)">❄</span>
+        )}
       </div>
       <div className="track-btns">
         {kind !== 'bus' && <button

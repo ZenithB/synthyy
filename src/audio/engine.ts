@@ -13,17 +13,22 @@ import {
   createClip, trackById, returns, ensureReturns, midifxOf, envKeys, envPoints, followOf, scenes, sceneIndex,
   isAudioClip, masterFx, masterAuto, barTicks, beatTicks, timeSig,
 } from '../state/doc'
-import { makeInstrument, makeEffect, setRateBpm, Inst, Fx } from './devices'
+import { makeInstrument, makeEffect, setRateBpm, fxNeutral, Inst, Fx } from './devices'
 import { instSchema, fxSchema, lfoShapeValue, LFO_DIV_TICKS, LFO_PARAMS, mixSpec, midiFxSchema, valueFromSpec, ParamSpec } from './schema'
 import { getSampleBuffer, onSampleReady } from './samples'
 import { clipAudioBuffer, configureAudioPlayer, audioFieldsFromMap, audioRate } from './audioclip'
 import { applyMidiFx as applyMidiFxData } from './midifx'
+import { renderFreezeTrack, FrozenTrackAudio, FrozenClip } from './render'
 import { getAudioPrefs } from './prefs'
 import { setUI, toast, ui } from '../state/store'
 
 const STOP = '__stop__'
 
-type BuiltFx = { id: string; type: string; fx: Fx; out: Tone.Volume; meter: Tone.Meter }
+// `bypassed`: the device's params make it audibly transparent (fxNeutral) and
+// nothing (LFO/macro/automation) targets it, so the chain is wired AROUND it.
+// The node stays built (disconnected nodes render ~free, and their internal
+// state survives), so re-engaging it never resets the other devices' tails.
+type BuiltFx = { id: string; type: string; fx: Fx; out: Tone.Volume; meter: Tone.Meter; bypassed: boolean }
 type BuiltTrack = {
   id: string
   kind: string
@@ -219,6 +224,17 @@ class Engine {
     return r
   }
 
+  // ---- track freeze (LOCAL per client, like playback) ----
+  // A frozen track's device processing (instrument → fx chain) is bounced to
+  // audio by render.ts and played back as plain buffers; the mixer half of the
+  // strip (pan/fader/sends) and any Sidechain devices stay LIVE. Freeze state
+  // lives here (not in the shared doc): each collaborator freezes for their own
+  // CPU. Any edit that would change the baked sound auto-unfreezes.
+  private frozen = new Map<string, FrozenTrackAudio>()
+  private freezingIds = new Set<string>()
+  isFrozen(trackId: string) { return this.frozen.has(trackId) }
+  isFreezing(trackId: string) { return this.freezingIds.has(trackId) }
+
   // ---- send/return buses + master analysers ----
   private builtReturns: BuiltReturn[] = []
   private masterFFT!: Tone.Analyser
@@ -318,7 +334,7 @@ class Engine {
       sink.connect(ctx.destination)
       let lastMsgT = 0
       node.port.onmessage = (e: MessageEvent) => {
-        const d = e.data as { clock: number; quanta: number; winMs?: number; maxGapMs?: number }
+        const d = e.data as { clock: number; frames?: number; quanta?: number; winMs?: number; maxGapMs?: number }
         let winSec = 0
         if (d.clock) {
           winSec = (d.winMs ?? 0) / 1000
@@ -331,7 +347,8 @@ class Engine {
           this.audioProbe.hasClock = false
         }
         if (winSec <= 0.02) return
-        const produced = (d.quanta * 128) / (this.sampleRate || 44100)
+        // frames (block-size agnostic); legacy quanta·128 kept for safety
+        const produced = (d.frames ?? (d.quanta ?? 0) * 128) / (this.sampleRate || 44100)
         const rtf = produced / winSec
         this.audioProbe.supported = true
         this.audioProbe.rtf = rtf
@@ -360,17 +377,21 @@ class Engine {
     } catch { /* probe is best-effort; never let it break audio */ }
   }
 
-  // The multiband-dynamics effect (sf-mbdyn) is a single AudioWorklet node, so
-  // its module must be registered before any track that uses it is built. Loaded
-  // once at start; mbcomp falls back to a passthrough if this ever fails.
+  // Worklet-backed effects (sf-mbdyn multiband; sf-fx chorus/phaser/shifter/
+  // autotune) are single AudioWorklet nodes, so their modules must be registered
+  // before any track that uses them is built. Loaded once at start; each device
+  // falls back cleanly (passthrough / Tone composite) if registration fails.
   private mbWorkletReady: Promise<void> | null = null
+  private fxWorkletReady: Promise<void> | null = null
   private async ensureMbWorklet() {
     try {
       const ctx = Tone.getContext().rawContext as AudioContext
       if (!ctx.audioWorklet) return
       if (!this.mbWorkletReady) this.mbWorkletReady = ctx.audioWorklet.addModule('/sf-mbdyn.js')
+      if (!this.fxWorkletReady) this.fxWorkletReady = ctx.audioWorklet.addModule('/sf-fx.js')
       await this.mbWorkletReady
-    } catch { /* best-effort; mbcomp degrades to passthrough if unavailable */ }
+      await this.fxWorkletReady
+    } catch { /* best-effort; devices degrade to passthrough/Tone if unavailable */ }
   }
 
   private async doStart() {
@@ -383,12 +404,18 @@ class Engine {
     // Custom sample rates are unsupported on older Safari → fall back cleanly.
     const prefs = getAudioPrefs()
     const latencyHint = prefs.latency
+    // The "Stable" buffer tier additionally asks for a hardware-sized render
+    // quantum (renderSizeHint, Chromium 2024+). Bigger blocks amortize per-node
+    // callback overhead across the whole graph — a real throughput win with
+    // hundreds of nodes. Unknown dictionary members are ignored by WebIDL, so
+    // this is a harmless no-op on browsers without support.
+    const sizeHint = prefs.latency === 'playback' ? { renderSizeHint: 'hardware' } : {}
     const nativeOpts = (): AudioContextOptions =>
-      prefs.sampleRate === 'auto' ? { latencyHint } : { latencyHint, sampleRate: prefs.sampleRate }
+      ({ latencyHint, ...sizeHint, ...(prefs.sampleRate === 'auto' ? {} : { sampleRate: prefs.sampleRate }) }) as AudioContextOptions
 
     if (prefs.oversample && !this.noOversample) {
       try {
-        Tone.setContext(new AudioContext({ sampleRate: 88200, latencyHint }))
+        Tone.setContext(new AudioContext({ sampleRate: 88200, latencyHint, ...sizeHint } as AudioContextOptions))
       } catch {
         this.noOversample = true
       }
@@ -513,8 +540,9 @@ class Engine {
     this.buildAll()
     tracks.observeDeep(this.onTracksDeep)
     tracks.observe(() => { this.tracksCache = null })          // membership → drop cached list
-    masterAuto.observeDeep(() => { this.masterAutoCache = null })
+    masterAuto.observeDeep(() => { this.masterAutoCache = null; this.scheduleMasterFxRewire() })
     clips.observe(this.onClipsShallow)
+    clips.observeDeep(this.onClipsDeepFreeze)
     arr.observeDeep(this.onArrDeep)
     meta.observe(this.onMeta)
     this.startModLoop()
@@ -687,8 +715,9 @@ class Engine {
       const rec = this.built.get(tid)
       if (!rec) continue
 
-      // tempo-synced effect ticks (sidechain ducker, etc.)
-      for (const bf of rec.fx) bf.fx.tick?.(syncedPos, playing, bpm)
+      // tempo-synced effect ticks (sidechain ducker, etc.) — bypassed devices
+      // are out of the graph, so don't burn frames driving them
+      for (const bf of rec.fx) if (!bf.bypassed) bf.fx.tick?.(syncedPos, playing, bpm)
 
       const lfos = this.lfoCfgsOf(tid, t)
 
@@ -796,7 +825,7 @@ class Engine {
     // master-bus effects that need a transport-synced tick (e.g. a ducker on the mix)
     if (this.builtMasterFx.length) {
       const bpm = this.transport.bpm.value
-      this.builtMasterFx.forEach(bf => bf.fx.tick?.(syncedPos, playing, bpm))
+      this.builtMasterFx.forEach(bf => { if (!bf.bypassed) bf.fx.tick?.(syncedPos, playing, bpm) })
     }
 
     // params modulated last frame but not now → snap back to their base value
@@ -909,32 +938,281 @@ class Engine {
 
   // ---------------- graph building ----------------
 
+  /** ids of effects on track `tid` that some LFO / macro / automation lane /
+   *  clip envelope targets — those must stay wired even when currently neutral,
+   *  so the modulation can open them up mid-performance. */
+  private fxModTargets(t: Y.Map<any>, tid: string): Set<string> {
+    const s = new Set<string>()
+    ;(t.get('lfos') as Y.Array<Y.Map<any>> | undefined)?.forEach(l => {
+      ;(l.get('targets') as Y.Array<Y.Map<any>> | undefined)?.forEach(tg => { if (tg.get('dest') === 'fx') s.add(tg.get('fxId') || '') })
+      if (l.get('dest') === 'fx') s.add((l.get('fxId') as string) || '')   // legacy single-field mapping
+    })
+    ;(t.get('macros') as Y.Array<Y.Map<any>> | undefined)?.forEach(m => {
+      ;(m.get('targets') as Y.Array<Y.Map<any>> | undefined)?.forEach(tg => { if (tg.get('dest') === 'fx') s.add(tg.get('fxId') || '') })
+    })
+    ;(t.get('auto') as Y.Map<any> | undefined)?.forEach((_a, k) => {
+      const [dest, fxId] = (k as string).split('|')
+      if (dest === 'fx') s.add(fxId || '')
+    })
+    // clip envelopes: any session clip on this track + any arrangement clip
+    clips.forEach((cm: Y.Map<any>, key: string) => {
+      if (!key.startsWith(tid + '|')) return
+      for (const k of envKeys(cm)) { const [dest, fxId] = k.split('|'); if (dest === 'fx') s.add(fxId || '') }
+    })
+    arr.forEach((cm: Y.Map<any>) => {
+      if (cm.get('trackId') !== tid) return
+      for (const k of envKeys(cm)) { const [dest, fxId] = k.split('|'); if (dest === 'fx') s.add(fxId || '') }
+    })
+    return s
+  }
+
+  /** Build the BuiltFx list for a track's current fx array (enabled devices
+   *  only), marking neutral non-targeted ones bypassed so wireFx skips them.
+   *  `duckOnly` (frozen tracks): everything except Sidechain is baked audio. */
+  private buildFxList(t: Y.Map<any>, tid: string, duckOnly = false): BuiltFx[] {
+    const targets = this.fxModTargets(t, tid)
+    const fx: BuiltFx[] = []
+    ;(t.get('fx') as Y.Array<Y.Map<any>>).forEach(f => {
+      if (!f.get('on')) return
+      if (duckOnly && f.get('type') !== 'duck') return
+      const type = f.get('type')
+      const params = (f.get('params') as Y.Map<number>).toJSON()
+      fx.push({
+        id: f.get('id'), type,
+        fx: makeEffect(type, params),
+        // per-device output level (pre-meter) + its level meter (Tone.Volume
+        // preserves stereo; Tone.Channel/Panner would downmix)
+        out: new Tone.Volume(f.get('out') ?? 0),
+        meter: new Tone.Meter({ smoothing: 0.8 }),
+        bypassed: fxNeutral(type, params) && !targets.has(f.get('id')),
+      })
+    })
+    return fx
+  }
+
+  /** (Re)wire instOut → [audible fx…] → panner, disconnecting everything first.
+   *  Wiring only — device nodes and their internal state are left untouched, so
+   *  a rewire never drops a delay/reverb tail. Bypassed devices are skipped
+   *  (a node with no path to the destination costs ~no audio-thread CPU). */
+  private wireFx(tid: string, instOut: Tone.Volume, instMeter: Tone.Meter, fx: BuiltFx[], panner: StereoPannerNode) {
+    const metered = tid === this.meteredTrackId
+    try { instOut.disconnect() } catch { /* ok */ }
+    // Per-instrument & per-effect meters only feed an AnalyserNode while THIS
+    // track's device rack is open (engine.meteredTrackId). Off-panel tracks skip
+    // the meter taps entirely — N fewer always-on analysers on the audio thread.
+    if (metered) instOut.connect(instMeter) // .connect (not Tone.connect) so the meter reads POST-gain
+    for (const bf of fx) {
+      try { (bf.fx.node as any).disconnect() } catch { /* ok */ }
+      try { bf.out.disconnect() } catch { /* ok */ }
+      if (metered) bf.out.connect(bf.meter)
+    }
+    // Per device: node → outGain → meter(tap); series continues from outGain so
+    // the output knob is genuinely PRE-meter.
+    let prev: any = instOut
+    for (const bf of fx) {
+      if (bf.bypassed) continue
+      Tone.connect(prev, bf.fx.node)
+      if (bf.fx.detect) Tone.connect(prev, bf.fx.detect) // pre-effect tap (Auto-Tune fallback / EQ7 RTA)
+      Tone.connect(bf.fx.node, bf.out)
+      prev = bf.out
+    }
+    Tone.connect(prev, panner)
+  }
+
+  /** Re-derive each device's bypassed flag; rewire only when something flipped.
+   *  Called (debounced) after param edits cross a neutral boundary and after
+   *  modulation-target topology changes (LFO/macro/automation/envelope edits). */
+  private refreshFxWiring(tid: string) {
+    const rec = this.built.get(tid)
+    const t = trackById(tid)
+    if (!rec || !t || !rec.fx.length) return
+    const targets = this.fxModTargets(t, tid)
+    let changed = false
+    for (const bf of rec.fx) {
+      const fxMap = this.findFxMap(t, bf.id)
+      const want = fxMap
+        ? fxNeutral(bf.type, (fxMap.get('params') as Y.Map<number>).toJSON()) && !targets.has(bf.id)
+        : bf.bypassed
+      if (want !== bf.bypassed) { bf.bypassed = want; changed = true }
+    }
+    if (changed) {
+      this.wireFx(tid, rec.instOut, rec.instMeter, rec.fx, rec.panner)
+      this.rebuildDuckTriggers()   // a bypassed duck must not fire
+      this.emit()
+    }
+  }
+
+  private fxRewireTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private scheduleFxRewire(tid: string) {
+    const prev = this.fxRewireTimers.get(tid)
+    if (prev) clearTimeout(prev)
+    this.fxRewireTimers.set(tid, setTimeout(() => {
+      this.fxRewireTimers.delete(tid)
+      this.refreshFxWiring(tid)
+    }, 50))
+  }
+
+  // Modulation-target topology changed somewhere (LFO mapping, macro mapping,
+  // automation lane, clip envelope) → re-check every chain's bypass flags.
+  private wiringRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  private scheduleWiringRefresh() {
+    if (!this.started) return
+    if (this.wiringRefreshTimer) clearTimeout(this.wiringRefreshTimer)
+    this.wiringRefreshTimer = setTimeout(() => {
+      this.wiringRefreshTimer = null
+      for (const rec of this.built.values()) this.refreshFxWiring(rec.id)
+      this.scheduleMasterFxRewire()
+    }, 150)
+  }
+
+  // ---------------- track freeze ----------------
+
+  /** Bounce a track's device chain offline, then rebuild it as a buffer player.
+   *  Sends/pan/fader stay live; ducks stay live; everything else is baked
+   *  (including LFOs/automation that target inst/fx params). */
+  async freezeTrack(trackId: string) {
+    if (this.frozen.has(trackId) || this.freezingIds.has(trackId)) return
+    const t = trackById(trackId)
+    if (!t || t.get('kind') === 'bus') { toast('Buses can’t be frozen — freeze the tracks feeding them'); return }
+    await this.ensureStarted()
+    this.freezingIds.add(trackId)
+    this.emit()
+    toast(`Freezing “${t.get('name')}”…`)
+    try {
+      const data = await renderFreezeTrack(trackId)
+      if (!data || (data.clips.size === 0 && !data.arr)) {
+        toast('Nothing to freeze — the track has no clips')
+        return
+      }
+      this.frozen.set(trackId, data)
+      this.rebuildTrack(trackId)
+      this.refreshArrIfPlaying()
+      toast(`“${t.get('name')}” frozen — device processing bounced ✓`)
+    } catch (e) {
+      console.error('freeze failed', e)
+      toast(`Freeze failed: ${String((e as Error)?.message || e).slice(0, 80)}`)
+    } finally {
+      this.freezingIds.delete(trackId)
+      this.emit()
+    }
+  }
+
+  unfreezeTrack(trackId: string) {
+    if (!this.frozen.delete(trackId)) return
+    this.rebuildTrack(trackId)
+    this.refreshArrIfPlaying()
+    toast('Track unfrozen — devices live again')
+    this.emit()
+  }
+
+  /** An edit invalidated a frozen bounce → drop it and go live again. */
+  private lastUnfreezeToast = 0
+  private autoUnfreeze(trackId: string, what: string) {
+    if (!this.frozen.delete(trackId)) return
+    this.scheduleRebuildTrack(trackId)
+    if (this.mode === 'arr') setTimeout(() => this.refreshArrIfPlaying(), 120)
+    const now = performance.now()
+    if (now - this.lastUnfreezeToast > 1500) {
+      this.lastUnfreezeToast = now
+      toast(`Track unfrozen — ${what}`)
+    }
+    this.emit()
+  }
+
+  /** Arrangement parts hold node references — regenerate them after a frozen
+   *  track's graph was swapped mid-play. */
+  private refreshArrIfPlaying() {
+    if (this.mode === 'arr' && this.transport.state === 'started') {
+      this.clearArrParts()
+      this.buildArrParts()
+    }
+  }
+
+  /** Loop a frozen clip buffer in sync with the transport. The player is
+   *  re-fired at every loop boundary by a transport repeat (sample-accurate,
+   *  proven click-free by the audio-clip one-shot path; a time-looped Player
+   *  would accumulate sub-sample rounding drift against the tick grid). */
+  private startFrozenLoop(rec: BuiltTrack, entry: FrozenClip, anchorTicks: number) {
+    const player = new Tone.Player(entry.buf as any)
+    player.connect(rec.inst.out as any)
+    const len = Math.max(1, entry.lenTicks)
+    const now = this.transport.state === 'started' ? this.transport.ticks : 0
+    let firstAt = anchorTicks
+    if (firstAt < now) {
+      const into = (((now - anchorTicks) % len) + len) % len
+      firstAt = into === 0 ? now : now + (len - into)
+      // enter mid-loop immediately; the boundary re-fire takes over from there
+      if (into > 0) { try { player.start(undefined, Tone.Ticks(into).toSeconds()) } catch { /* ok */ } }
+    }
+    rec.clipRepeat = this.transport.scheduleRepeat(time => {
+      try { player.stop(time); player.start(time) } catch { /* ok */ }
+    }, `${len}i`, `${firstAt}i`)
+    rec.player = player
+  }
+
+  /** Session-launch a frozen clip (mirrors launchAudioClip's boundary logic). */
+  private launchFrozenClip(trackId: string, sceneId: string, key: string) {
+    const rec = this.built.get(trackId)
+    const entry = this.frozen.get(trackId)?.clips.get(key)
+    if (!rec || !entry) return
+    const started = this.transport.state === 'started'
+    const atTicks = started ? this.nextBoundaryTicks() : 0
+    this.cancelQueued(rec)
+    if (rec.part) { try { rec.part.stop(); rec.part.dispose() } catch { /* ok */ } rec.part = null }
+    rec.unobserve?.(); rec.unobserve = null
+    const oldPlayer = rec.player
+    this.clearClipRepeat(rec)
+    if (!started) { this.transport.ticks = 0 as any; this.transport.start('+0.05'); this.resumeArmed(trackId) }
+    this.startFrozenLoop(rec, entry, atTicks)
+    if (oldPlayer) { try { oldPlayer.stop(`${atTicks}i`) } catch { /* ok */ } setTimeout(() => { try { oldPlayer.unsync(); oldPlayer.dispose() } catch { /* ok */ } }, 900) }
+    rec.partKey = key
+    rec.partStartTicks = atTicks
+    rec.partLoopTicks = entry.lenTicks
+    this.armFollow(trackId, sceneId, atTicks)
+    this.emit()
+  }
+
+  /** Clip CONTENT edits (notes, envelopes, audio fields) invalidate a frozen
+   *  bounce — playback observers only cover the playing clip, so a dedicated
+   *  deep observer guards every clip of every frozen track. */
+  private onClipsDeepFreeze = (events: Y.YEvent<any>[]) => {
+    if (!this.frozen.size) return
+    for (const ev of events) {
+      if (ev.path.length > 0) {
+        const tid = String(ev.path[0]).split('|')[0]
+        if (this.frozen.has(tid)) this.autoUnfreeze(tid, 'a clip was edited')
+      } else {
+        ;(ev as Y.YMapEvent<any>).changes.keys.forEach((_c, key) => {
+          const tid = key.split('|')[0]
+          if (this.frozen.has(tid)) this.autoUnfreeze(tid, 'a clip was added or removed')
+        })
+      }
+    }
+  }
+
   private buildTrack(t: Y.Map<any>) {
     const tid = t.get('id') as string
     const it = t.get('inst') as Y.Map<any>
     const instType = it.get('type')
-    const buf = (instType === 'sampler' || instType === 'ksampler' || instType === 'granular') ? getSampleBuffer(it.get('sampleId') || '') : undefined
+    // FROZEN: the instrument and (non-duck) fx are already bounced into audio
+    // buffers — build only a passthrough input (frozen players connect into it)
+    // plus any Sidechain devices, then the normal pan/fader/sends strip. The
+    // heavy half of the chain simply doesn't exist while frozen.
+    const isFrozenTrack = this.frozen.has(tid) && t.get('kind') !== 'bus'
+    const buf = (!isFrozenTrack && (instType === 'sampler' || instType === 'ksampler' || instType === 'granular')) ? getSampleBuffer(it.get('sampleId') || '') : undefined
     // drum: resolve any per-pad sample overrides to buffers (missing ones stay synth)
     let padBuffers: Map<number, AudioBuffer> | undefined
-    if (it.get('type') === 'drum') {
+    if (!isFrozenTrack && it.get('type') === 'drum') {
       const ps = it.get('padSamples') as Y.Map<string> | undefined
       if (ps && ps.size) {
         padBuffers = new Map()
         ps.forEach((sid, k) => { const b = getSampleBuffer(sid); if (b) padBuffers!.set(+k, b) })
       }
     }
-    const inst = makeInstrument(it.get('type'), (it.get('params') as Y.Map<number>).toJSON(), buf, padBuffers)
-    const fx: BuiltFx[] = []
-    ;(t.get('fx') as Y.Array<Y.Map<any>>).forEach(f => {
-      if (f.get('on')) fx.push({
-        id: f.get('id'), type: f.get('type'),
-        fx: makeEffect(f.get('type'), (f.get('params') as Y.Map<number>).toJSON()),
-        // per-device output level (pre-meter) + its level meter (Tone.Volume
-        // preserves stereo; Tone.Channel/Panner would downmix)
-        out: new Tone.Volume(f.get('out') ?? 0),
-        meter: new Tone.Meter({ smoothing: 0.8 }),
-      })
-    })
+    const inst = isFrozenTrack
+      ? makeInstrument('audiobus', {})
+      : makeInstrument(it.get('type'), (it.get('params') as Y.Map<number>).toJSON(), buf, padBuffers)
+    const fx = this.buildFxList(t, tid, isFrozenTrack)
     // Stereo-preserving strip: pan → volume. We use a RAW StereoPannerNode
     // because Tone.Panner (like Tone.Channel) downmixes stereo input to mono —
     // which would flatten stereo samples and stereo effects.
@@ -943,25 +1221,11 @@ class Engine {
     panner.pan.value = t.get('pan') ?? 0
     const vol = new Tone.Volume(t.get('gain') ?? 0)
     const meter = new Tone.Meter({ smoothing: 0.8 })
-    // Per device: node → outGain → meter(tap); series continues from outGain so
-    // the output knob is genuinely PRE-meter. Instrument first, then each fx.
-    const instOut = new Tone.Volume(it.get('out') ?? 0)
+    // frozen: the instrument's out gain is baked into the bounce → neutral here
+    const instOut = new Tone.Volume(isFrozenTrack ? 0 : (it.get('out') ?? 0))
     const instMeter = new Tone.Meter({ smoothing: 0.8 })
-    // Per-instrument & per-effect meters only feed an AnalyserNode while THIS
-    // track's device rack is open (engine.meteredTrackId). Off-panel tracks skip
-    // the meter taps entirely — N fewer always-on analysers on the audio thread.
-    const metered = tid === this.meteredTrackId
     Tone.connect(inst.out, instOut)
-    if (metered) instOut.connect(instMeter) // .connect (not Tone.connect) so the meter reads POST-gain
-    let prev: any = instOut
-    fx.forEach(bf => {
-      Tone.connect(prev, bf.fx.node)
-      if (bf.fx.detect) Tone.connect(prev, bf.fx.detect) // pre-effect tap (Auto-Tune)
-      Tone.connect(bf.fx.node, bf.out)
-      if (metered) bf.out.connect(bf.meter)
-      prev = bf.out
-    })
-    Tone.connect(prev, panner)
+    this.wireFx(tid, instOut, instMeter, fx, panner)
     Tone.connect(panner, vol)
     const isBus = t.get('kind') === 'bus'
     // Buses route to their `output` target (master or another bus) in rewireBuses,
@@ -1138,39 +1402,86 @@ class Engine {
   // through them — live and, mirrored in render.ts, in exports. Built with the
   // same makeEffect()/BuiltFx machinery as track effects, so the device rack
   // (target id 'master') drives it unchanged.
-  private buildMasterFx() {
-    this.builtMasterFx.forEach(bf => { try { bf.fx.dispose() } catch { /* ok */ } try { bf.out.dispose() } catch { /* ok */ } try { bf.meter.dispose() } catch { /* ok */ } })
-    this.builtMasterFx = []
+  /** Master-fx ids targeted by a master automation lane (must stay wired). */
+  private masterFxTargets(): Set<string> {
+    const s = new Set<string>()
+    masterAuto.forEach((_a: Y.Array<any>, k: string) => {
+      const [dest, fxId] = k.split('|')
+      if (dest === 'fx') s.add(fxId || '')
+    })
+    return s
+  }
+
+  /** Re-derive master bypass flags; returns true when any flipped. */
+  private applyMasterBypassFlags(): boolean {
+    const targets = this.masterFxTargets()
+    let changed = false
+    for (const bf of this.builtMasterFx) {
+      const fxMap = masterFx.toArray().find(f => f.get('id') === bf.id)
+      const want = fxMap
+        ? fxNeutral(bf.type, (fxMap.get('params') as Y.Map<number>).toJSON()) && !targets.has(bf.id)
+        : bf.bypassed
+      if (want !== bf.bypassed) { bf.bypassed = want; changed = true }
+    }
+    return changed
+  }
+
+  /** (Re)wire master → [audible fx…] → limiter + analyser taps. Wiring only —
+   *  device state survives, mirroring wireFx. */
+  private wireMasterFx() {
     try { this.master.disconnect() } catch { /* ok */ }   // detach old chain + meter taps
     const metered = this.meteredTrackId === 'master'
+    for (const bf of this.builtMasterFx) {
+      try { (bf.fx.node as any).disconnect() } catch { /* ok */ }
+      try { bf.out.disconnect() } catch { /* ok */ }
+      if (metered) bf.out.connect(bf.meter)
+    }
     let prev: Tone.ToneAudioNode = this.master
-    masterFx.forEach(f => {
-      if (!f.get('on')) return
-      const bf: BuiltFx = {
-        id: f.get('id'), type: f.get('type'),
-        fx: makeEffect(f.get('type'), (f.get('params') as Y.Map<number>).toJSON()),
-        out: new Tone.Volume(f.get('out') ?? 0),
-        meter: new Tone.Meter({ smoothing: 0.8 }),
-      }
+    for (const bf of this.builtMasterFx) {
+      if (bf.bypassed) continue
       Tone.connect(prev, bf.fx.node)
       if (bf.fx.detect) Tone.connect(prev, bf.fx.detect)
       Tone.connect(bf.fx.node, bf.out)
-      if (metered) bf.out.connect(bf.meter)
       prev = bf.out
-      this.builtMasterFx.push(bf)
-    })
+    }
     this.masterChainOut = prev
     Tone.connect(prev, this.limiter)
     // analysers/meter tap the chain tail so the master meter + spectrum reflect fx
     ;(prev as any).connect(this.masterMeter)
     ;(prev as any).connect(this.masterFFT)
     ;(prev as any).connect(this.masterWave)
+  }
+
+  private buildMasterFx() {
+    this.builtMasterFx.forEach(bf => { try { bf.fx.dispose() } catch { /* ok */ } try { bf.out.dispose() } catch { /* ok */ } try { bf.meter.dispose() } catch { /* ok */ } })
+    this.builtMasterFx = []
+    masterFx.forEach(f => {
+      if (!f.get('on')) return
+      this.builtMasterFx.push({
+        id: f.get('id'), type: f.get('type'),
+        fx: makeEffect(f.get('type'), (f.get('params') as Y.Map<number>).toJSON()),
+        out: new Tone.Volume(f.get('out') ?? 0),
+        meter: new Tone.Meter({ smoothing: 0.8 }),
+        bypassed: false,
+      })
+    })
+    this.applyMasterBypassFlags()
+    this.wireMasterFx()
     this.recomputeModActive()   // a master duck/autotune contributes a tick
   }
 
   private scheduleMasterFxRebuild() {
     if (this.masterFxTimer) clearTimeout(this.masterFxTimer)
     this.masterFxTimer = setTimeout(() => { this.masterFxTimer = null; this.buildMasterFx() }, 50)
+  }
+
+  private masterRewireTimer: ReturnType<typeof setTimeout> | null = null
+  private scheduleMasterFxRewire() {
+    if (this.masterRewireTimer) clearTimeout(this.masterRewireTimer)
+    this.masterRewireTimer = setTimeout(() => {
+      this.masterRewireTimer = null
+      if (this.applyMasterBypassFlags()) { this.wireMasterFx(); this.rebuildDuckTriggers(); this.emit() }
+    }, 50)
   }
 
   private onMasterFxDeep = (events: Y.YEvent<any>[]) => {
@@ -1184,8 +1495,10 @@ class Engine {
       const fxMap = masterFx.get(idx)
       const bf = fxMap && this.builtMasterFx.find(f => f.id === fxMap.get('id'))
       if (path.length >= 2 && (path[path.length - 1] === 'params' || path[1] === 'params')) {
-        if (bf) ev.changes.keys.forEach((_c, key) => { const v = (ev.target as Y.Map<number>).get(key); if (typeof v === 'number') bf.fx.set(key, v) })
-        else structural = true
+        if (bf) {
+          ev.changes.keys.forEach((_c, key) => { const v = (ev.target as Y.Map<number>).get(key); if (typeof v === 'number') bf.fx.set(key, v) })
+          if (fxMap && fxNeutral(bf.type, (fxMap.get('params') as Y.Map<number>).toJSON()) !== bf.bypassed) this.scheduleMasterFxRewire()
+        } else structural = true
       } else if (path.length === 2) {
         // direct keys on an fx map: 'out' is a live ramp; 'on'/'type' rebuild
         ev.changes.keys.forEach((_c, key) => {
@@ -1222,6 +1535,7 @@ class Engine {
   buildAll() {
     const ids = new Set<string>()
     tracks.forEach(t => ids.add(t.get('id')))
+    for (const tid of [...this.frozen.keys()]) if (!ids.has(tid)) this.frozen.delete(tid)
     ;[...this.built.values()].filter(r => !ids.has(r.id)).forEach(r => this.disposeTrack(r))
     tracks.forEach(t => {
       if (!this.built.has(t.get('id'))) this.buildTrack(t)
@@ -1288,30 +1602,9 @@ class Engine {
     if (!rec || !t) return
     // tear down the old fx nodes
     rec.fx.forEach(bf => { try { bf.fx.dispose() } catch { /* ok */ } try { bf.out.dispose() } catch { /* ok */ } try { bf.meter.dispose() } catch { /* ok */ } })
-    // detach instOut's outputs (its meter tap + the old chain) and re-tap the meter
-    const metered = tid === this.meteredTrackId
-    try { rec.instOut.disconnect() } catch { /* ok */ }
-    if (metered) rec.instOut.connect(rec.instMeter)
     // build the current chain and splice instOut → [fx…] → panner
-    const fx: BuiltFx[] = []
-    ;(t.get('fx') as Y.Array<Y.Map<any>>).forEach(f => {
-      if (f.get('on')) fx.push({
-        id: f.get('id'), type: f.get('type'),
-        fx: makeEffect(f.get('type'), (f.get('params') as Y.Map<number>).toJSON()),
-        out: new Tone.Volume(f.get('out') ?? 0),
-        meter: new Tone.Meter({ smoothing: 0.8 }),
-      })
-    })
-    let prev: any = rec.instOut
-    fx.forEach(bf => {
-      Tone.connect(prev, bf.fx.node)
-      if (bf.fx.detect) Tone.connect(prev, bf.fx.detect)
-      Tone.connect(bf.fx.node, bf.out)
-      if (metered) bf.out.connect(bf.meter)
-      prev = bf.out
-    })
-    Tone.connect(prev, rec.panner)
-    rec.fx = fx
+    rec.fx = this.buildFxList(t, tid)
+    this.wireFx(tid, rec.instOut, rec.instMeter, rec.fx, rec.panner)
     this.recomputeModActive()   // fx tick set may have changed (duck/autotune)
     this.emit()
   }
@@ -1331,6 +1624,14 @@ class Engine {
       const tid = t.get('id') as string
       const rec = this.built.get(tid)
       if (!rec) { structural.add(tid); continue }
+      // any edit that touches what the freeze baked → back to live processing
+      if (this.frozen.has(tid)) {
+        const BAKED = ['inst', 'fx', 'midifx', 'lfos', 'macros', 'auto']
+        const sub = path.length > 1 ? String(path[1]) : ''
+        let hit = BAKED.includes(sub)
+        if (!hit && path.length === 1) ev.changes.keys.forEach((_c, key) => { if (BAKED.includes(key)) hit = true })
+        if (hit) this.autoUnfreeze(tid, 'its devices were edited')
+      }
       if (path.length === 1) {
         ev.changes.keys.forEach((_c, key) => {
           if (key === 'gain') rec.vol.volume.rampTo(t.get('gain'), 0.05)
@@ -1343,6 +1644,7 @@ class Engine {
           else if (key === 'inst') structural.add(tid)
           else if (key === 'fx') fxDirty.add(tid)
           else if (key === 'midifx') this.refreshPart(rec)
+          else if (key === 'lfos' || key === 'macros' || key === 'auto') this.scheduleWiringRefresh()
         })
       } else if (path[1] === 'sends') {
         this.rewireBuses()
@@ -1373,6 +1675,9 @@ class Engine {
               const v = (ev.target as Y.Map<number>).get(key)
               if (typeof v === 'number') bf.fx.set(key, v)
             })
+            // the edit may have crossed the neutral boundary (e.g. wet → 0, or
+            // back up) → re-derive the device's bypass wiring (debounced)
+            if (fxNeutral(bf.type, (fxMap!.get('params') as Y.Map<number>).toJSON()) !== bf.bypassed) this.scheduleFxRewire(tid)
           } else fxDirty.add(tid)
         } else if (path.length === 3) {
           // direct keys on an fx map: 'out' is a live gain; 'on'/'type' re-splice
@@ -1385,6 +1690,9 @@ class Engine {
           })
           if (rebuild || !bf) fxDirty.add(tid)
         } else fxDirty.add(tid)   // add / remove / reorder an effect
+      } else if (path[1] === 'lfos' || path[1] === 'macros' || path[1] === 'auto') {
+        // modulation-target topology changed → bypassed devices may need to wake
+        this.scheduleWiringRefresh()
       }
     }
     if (membership) this.buildAll()
@@ -1413,10 +1721,24 @@ class Engine {
     })
   }
 
-  private onArrDeep = () => {
+  private onArrDeep = (events?: Y.YEvent<any>[]) => {
     // any arrangement change invalidates the clip index + cached clip envelopes
     this.arrIndexCache = null
     this.clipEnvCache.clear()
+    this.scheduleWiringRefresh()   // arr clip envelopes are fx-bypass guards too
+    // a frozen track's LANE bounce is invalidated by arrangement edits: clip
+    // moves/edits name their track; membership changes (add/remove) can't, so
+    // those conservatively unfreeze every track that carries a lane bounce
+    if (this.frozen.size && events) {
+      for (const ev of events) {
+        if (ev.path.length > 0) {
+          const tid = (arr.get(String(ev.path[0])) as Y.Map<any> | undefined)?.get('trackId')
+          if (tid && this.frozen.has(tid)) this.autoUnfreeze(tid, 'the arrangement changed')
+        } else {
+          for (const [tid, d] of [...this.frozen]) if (d.arr) this.autoUnfreeze(tid, 'the arrangement changed')
+        }
+      }
+    }
     if (!this.started || this.mode !== 'arr') return
     if (this.arrTimer) clearTimeout(this.arrTimer)
     this.arrTimer = setTimeout(() => {
@@ -1433,6 +1755,11 @@ class Engine {
     if (!this.started) return
     const t = this.transport
     ev.changes.keys.forEach((_c, key) => {
+      // frozen bounces bake tempo/meter/key — any of these changing means the
+      // baked audio no longer matches, so every frozen track goes live again
+      if (this.frozen.size && ['bpm', 'swing', 'swingSubdivision', 'tsTop', 'tsBottom', 'root', 'scale'].includes(key)) {
+        for (const tid of [...this.frozen.keys()]) this.autoUnfreeze(tid, 'project settings changed')
+      }
       if (key === 'bpm') {
         t.bpm.rampTo(meta.get('bpm'), 0.1)
         setRateBpm(meta.get('bpm') ?? 120)   // retune tempo-synced fx rates
@@ -1555,6 +1882,7 @@ class Engine {
       this.partTimers.set(rec.id, setTimeout(() => {
         this.partTimers.delete(rec.id)
         this.recomputeBusIdle()   // a send envelope may have been added/removed
+        this.scheduleWiringRefresh()   // an fx envelope may need a bypassed device awake
         if (rec.partKey !== key || !rec.part) return
         rec.part.clear()
         this.buildEvents(trackById(rec.id), clipMap).forEach(ev => rec.part!.add(ev as any))
@@ -1735,6 +2063,19 @@ class Engine {
     const rec = this.built.get(tid)
     const clipMap = clips.get(key) as Y.Map<any> | undefined
     if (!rec || !clipMap) return
+    // frozen: resume as a synced buffer loop, preserving the anchor phase
+    const fentry = this.frozen.get(tid)?.clips.get(key)
+    if (fentry) {
+      this.stopTrackNow(rec)
+      const loopLen = Math.max(1, fentry.lenTicks)
+      const nowTicks = this.transport.ticks
+      const anchor = anchorTicks != null ? anchorTicks : nowTicks - (((nowTicks % loopLen) + loopLen) % loopLen)
+      this.startFrozenLoop(rec, fentry, anchor)
+      rec.partKey = key
+      rec.partStartTicks = anchor
+      rec.partLoopTicks = loopLen
+      return
+    }
     this.stopTrackNow(rec)
     // the clip may have been edited while stopped (no observer attached then)
     this.clipEnvCache.delete(clipMap)
@@ -1804,6 +2145,12 @@ class Engine {
     const rec = this.built.get(trackId)
     const clipMap = clips.get(key) as Y.Map<any> | undefined
     if (!rec || !clipMap) return
+    const fz = this.frozen.get(trackId)
+    if (fz) {
+      if (fz.clips.has(key)) { this.launchFrozenClip(trackId, sceneId, key); return }
+      // no bounce for this clip (shouldn't happen — edits auto-unfreeze) → go live
+      this.autoUnfreeze(trackId, 'this clip wasn’t in the bounce')
+    }
     if (isAudioClip(clipMap)) { this.launchAudioClip(trackId, sceneId, key); return }
     if (rec.partKey === key && !rec.queuedKey && !rec.queuedPart) return
 
@@ -1909,9 +2256,22 @@ class Engine {
   }
 
   private buildArrParts() {
+    const frozenStarted = new Set<string>()
     arr.forEach(clipMap => {
       const rec = this.built.get(clipMap.get('trackId'))
       if (!rec) return
+      // frozen: ONE synced player carries the whole lane bounce (starts at
+      // tick 0, so transport seeks resolve to the right offset automatically)
+      const fz = this.frozen.get(rec.id)
+      if (fz?.arr) {
+        if (frozenStarted.has(rec.id)) return
+        frozenStarted.add(rec.id)
+        const player = new Tone.Player(fz.arr as any)
+        player.connect(rec.inst.out as any)
+        try { player.sync().start('0i') } catch { /* ok */ }
+        this.arrParts.push(player)
+        return
+      }
       const start = clipMap.get('start') ?? 0
       const len = clipMap.get('len') ?? BAR
       if (isAudioClip(clipMap)) {
@@ -2019,6 +2379,15 @@ class Engine {
     const sceneId = key.split('|')[1]
     this.stopTrackNow(rec)   // clear the paused marker + any stale nodes
     this.clipEnvCache.delete(clipMap)
+    const fentry = this.frozen.get(trackId)?.clips.get(key)
+    if (fentry) {
+      this.startFrozenLoop(rec, fentry, 0)
+      rec.partKey = key
+      rec.partStartTicks = 0
+      rec.partLoopTicks = fentry.lenTicks
+      this.armFollow(trackId, sceneId, 0)
+      return
+    }
     if (isAudioClip(clipMap)) {
       this.startSessionPlayer(rec, clipMap, 0)
       rec.partKey = key
@@ -2197,9 +2566,12 @@ class Engine {
     for (const rec of this.built.values()) {
       const t = trackById(rec.id)
       if (!t) continue
-      for (const bf of rec.fx) wire(this.findFxMap(t, bf.id)!, bf.fx)
+      for (const bf of rec.fx) { if (!bf.bypassed) wire(this.findFxMap(t, bf.id)!, bf.fx) }
     }
-    masterFx.forEach(m => wire(m, this.builtMasterFx.find(f => f.id === m.get('id'))?.fx))
+    masterFx.forEach(m => {
+      const bf = this.builtMasterFx.find(f => f.id === m.get('id'))
+      if (bf && !bf.bypassed) wire(m, bf.fx)
+    })
   }
   /** A note fired on `tid` — kick any duck listening to that track (or pad). */
   private fireDucks(tid: string, pitch: number, when: number) {

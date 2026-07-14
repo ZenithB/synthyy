@@ -238,6 +238,7 @@ export function ArrangementView() {
   useY(arr)
   useY(meta)
   useY(masterAuto)   // master-bus automation lives outside `tracks`; observe it for the dot + lane
+  useSyncExternalStore(engine.subscribe, () => engine.version)   // freeze badges follow engine state
   const zoom = useUI(s => s.zoomPxPerBar)
   const uiZoom = useUI(s => s.uiZoom)
   // zoom stays "pixels per bar", so a bar keeps its width under any meter
@@ -750,6 +751,10 @@ export function ArrangementView() {
                     {(!isMaster && renamingTid === tid)
                       ? <InlineRename value={r.name} onDone={v => { setRenamingTid(null); if (v) renameTrack(tid, v) }} />
                       : <span className="arr-head-name" onDoubleClick={e => { e.stopPropagation(); if (!isMaster) setRenamingTid(tid) }}>{r.name}</span>}
+                    {!isMaster && engine.isFrozen(tid) && (
+                      <span style={{ fontSize: 10, opacity: 0.85 }}
+                        data-info="Frozen — device processing is bounced to audio (right-click to unfreeze)">❄</span>
+                    )}
                     {!isMaster && (
                       <>
                         <button className={`tbtn mute ${r.mute ? 'on' : ''}`} data-info="Mute" onClick={e => { e.stopPropagation(); setTrackMix(tid, { mute: !r.mute }) }}>M</button>
