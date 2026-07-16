@@ -376,6 +376,7 @@ function makeClipScheduler(
   scaleId: string,
   totalTicks: number,
   fireDucks: (tid: string, pitch: number, when: number) => void,
+  humanize = 0,
 ) {
   const t = ot.json
   const isDrum = t.kind === 'drum'
@@ -423,12 +424,23 @@ function makeClipScheduler(
     }
     const part = new Tone.Part((time, ev: any) => {
       if (ev.pr < 1 && Math.random() > ev.pr) return
+      // Humanize, mirroring the live engine's makePart: per-note micro-variation
+      // (±10% of a beat of timing, ±10% of velocity, scaled by the knob),
+      // re-rolled every time the note plays — so each loop pass of a long bounce
+      // differs, exactly like live playback. One render = one performance.
+      let when = time
+      let vel = ev.v
+      if (humanize > 0) {
+        const jitterTicks = (Math.random() * 2 - 1) * 0.1 * (BAR / 4) * humanize
+        when = Math.max(Tone.immediate(), time + Tone.Ticks(jitterTicks).toSeconds())
+        vel = clamp(ev.v + (Math.random() * 2 - 1) * 0.1 * humanize, 0.02, 1)
+      }
       // Two notes on the exact same tick hitting one oscillator-based voice
       // (mono synth, kick/perc pad) restart its Source at a non-increasing time
       // → "Start time must be strictly greater than previous start time", which
       // aborts the bounce. Skip the duplicate (inaudible anyway on a mono voice).
-      try { ot.inst.trigger(ev.p, Math.max(0.02, Tone.Ticks(ev.d).toSeconds()), time, ev.v) } catch { /* ok */ }
-      fireDucks(tid, ev.p, time)
+      try { ot.inst.trigger(ev.p, Math.max(0.02, Tone.Ticks(ev.d).toSeconds()), when, vel) } catch { /* ok */ }
+      fireDucks(tid, ev.p, when)
     }, expand() as any)
     part.loop = true
     part.loopStart = 0
@@ -464,7 +476,7 @@ async function renderBuffer(
     transport.bpm.value = bpm
     setRateBpm(bpm)   // synced fx rate knobs derive Hz from this at build time
     transport.swing = project.meta.swing
-    transport.swingSubdivision = '16n'
+    transport.swingSubdivision = (project.meta.swingSubdivision as any) ?? '16n'   // honor the 8n/16n toggle, like live playback
 
     // Worklet-backed effects (mbcomp; chorus/phaser/autotune via sf-fx) need
     // their modules registered on THIS offline context so the bounce sounds like
@@ -550,7 +562,7 @@ async function renderBuffer(
       }
 
       const tid = t.id ?? t.name
-      const scheduleClip = makeClipScheduler(ot, root, scaleId, lengthTicks, fireDucks)
+      const scheduleClip = makeClipScheduler(ot, root, scaleId, lengthTicks, fireDucks, project.meta.humanize ?? 0)
 
       if (scope.kind === 'scene') {
         const clip = project.clips[`${tid}|${sceneId}`]
@@ -689,7 +701,7 @@ async function renderTrackTap(
     transport.bpm.value = bpm
     setRateBpm(bpm)
     transport.swing = project.meta.swing
-    transport.swingSubdivision = '16n'
+    transport.swingSubdivision = (project.meta.swingSubdivision as any) ?? '16n'
     await registerOfflineWorklets(project, t)
 
     // sink target for buildOffTrack's signature only — the fader/sends stay
@@ -698,7 +710,7 @@ async function renderTrackTap(
     const ot = buildOffTrack(t, master, [], false, false)
     Tone.connect(ot.tail, Tone.getDestination())
 
-    const scheduleClip = makeClipScheduler(ot, root, scaleId, lengthTicks, () => { /* ducks stay live */ })
+    const scheduleClip = makeClipScheduler(ot, root, scaleId, lengthTicks, () => { /* ducks stay live */ }, project.meta.humanize ?? 0)
     if (clip) {
       ot.loopLen = clip.len
       if (clip.env) ot.envEntries = Object.entries(clip.env)

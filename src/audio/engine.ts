@@ -1755,9 +1755,9 @@ class Engine {
     if (!this.started) return
     const t = this.transport
     ev.changes.keys.forEach((_c, key) => {
-      // frozen bounces bake tempo/meter/key — any of these changing means the
-      // baked audio no longer matches, so every frozen track goes live again
-      if (this.frozen.size && ['bpm', 'swing', 'swingSubdivision', 'tsTop', 'tsBottom', 'root', 'scale'].includes(key)) {
+      // frozen bounces bake tempo/meter/key/humanize — any of these changing
+      // means the baked audio no longer matches, so every frozen track goes live
+      if (this.frozen.size && ['bpm', 'swing', 'swingSubdivision', 'tsTop', 'tsBottom', 'root', 'scale', 'humanize'].includes(key)) {
         for (const tid of [...this.frozen.keys()]) this.autoUnfreeze(tid, 'project settings changed')
       }
       if (key === 'bpm') {
