@@ -804,6 +804,17 @@ function scopeBounds(project: ProjectJSON, scope: RenderScope): { from: number; 
   return { from: 0, ticks }
 }
 
+/** Render the current doc's mixdown for a scope and return the buffer — the
+ *  golden-fixture path (docs/RUST_REWRITE_PLAN.md §8a) and any caller that
+ *  needs audio rather than a download. Exactly exportAudio's mix branch. */
+export async function renderMixdown(scope: RenderScope): Promise<AudioBuffer> {
+  const project = exportProject()
+  const bounds = scopeBounds(project, scope)
+  if (!bounds) throw new Error('Nothing to render for this scope')
+  const { from, ticks, sceneId } = bounds
+  return renderBuffer(project, scope, { kind: 'mix' }, from, ticks, sceneId)
+}
+
 /** Render + encode + download in the chosen format / channels, optionally as stems. */
 export async function exportAudio(scope: RenderScope, opts: ExportOptions) {
   const project = exportProject()

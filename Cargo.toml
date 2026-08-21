@@ -1,0 +1,45 @@
+# Rust workspace for the Synthtagram desktop app (docs/RUST_REWRITE_PLAN.md §3).
+# The web app (src/, Vite) lives beside it and must always stay green.
+
+[workspace]
+resolver = "2"
+members = [
+  "crates/sf-dsp",
+  "crates/sf-engine",
+  "crates/sf-io",
+  "crates/sf-project",
+  "crates/sf-render",
+  "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+sf-dsp = { path = "crates/sf-dsp" }
+sf-engine = { path = "crates/sf-engine" }
+sf-io = { path = "crates/sf-io" }
+sf-project = { path = "crates/sf-project" }
+sf-render = { path = "crates/sf-render" }
+cpal = "0.16"
+rtrb = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hound = "3"
+rubato = "0.16"
+realfft = "3"
+basedrop = "0.1"
+arc-swap = "1"
+base64 = "0.22"
+libm = "0.2"
+assert_no_alloc = "1"
+
+# Real-time audio: optimize even in dev so a debug build can still make its
+# callback deadline at 64-sample buffers.
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 2

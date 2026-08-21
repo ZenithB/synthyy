@@ -12,6 +12,23 @@ import { ui } from './state/store'
 async function boot() {
   await idb.whenSynced
 
+  // Dev-only golden-fixture harness (#fixtures): renders fixture projects to
+  // WAV through the export path — no app UI, no P2P. Guarded by DEV so none of
+  // it (page, hook, fixture JSONs) can reach the production bundle.
+  if (import.meta.env.DEV && location.hash === '#fixtures') {
+    const [{ FixturesPage }, { installFixtureHook }] = await Promise.all([
+      import('./ui/FixturesPage'),
+      import('./audio/fixtures'),
+    ])
+    installFixtureHook()
+    createRoot(document.getElementById('root')!).render(<FixturesPage />)
+    return
+  }
+  if (import.meta.env.DEV) {
+    // automation hook available in the normal dev app too (visible-tab renders)
+    import('./audio/fixtures').then(m => m.installFixtureHook())
+  }
+
   // moving a project into a fresh share-room carries the FULL document across
   // the reload (lossless — sends, LFOs, macros, returns, automation and all)
   maybeTakeCarried()

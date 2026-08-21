@@ -1,0 +1,282 @@
+{
+  "meta": {
+    "title": "Untitled Jam",
+    "bpm": 120,
+    "swing": 0,
+    "swingSubdivision": "16n",
+    "humanize": 0,
+    "root": 9,
+    "scale": "minor",
+    "launchQ": 1
+  },
+  "tracks": [
+    {
+      "id": "tDrums",
+      "name": "Drums",
+      "color": 0,
+      "kind": "drum",
+      "inst": {
+        "type": "drum",
+        "params": {
+          "p0_tune": -2,
+          "p0_decay": 0.8,
+          "p0_level": 0,
+          "p1_tune": 0,
+          "p1_decay": 0.2,
+          "p1_level": 0,
+          "p2_tune": 0,
+          "p2_decay": 0.28,
+          "p2_level": 0,
+          "p3_tune": 0,
+          "p3_decay": 0.05,
+          "p3_level": 0,
+          "p4_tune": 0,
+          "p4_decay": 0.35,
+          "p4_level": 0,
+          "p5_tune": 0,
+          "p5_decay": 0.32,
+          "p5_level": 0,
+          "p6_tune": 0,
+          "p6_decay": 0.12,
+          "p6_level": 0,
+          "p7_tune": 0,
+          "p7_decay": 1.3,
+          "p7_level": 0
+        }
+      },
+      "fx": [
+        {
+          "type": "comp",
+          "on": true,
+          "params": {
+            "thresh": -18,
+            "ratio": 4,
+            "attack": 0.01,
+            "release": 0.18
+          }
+        }
+      ],
+      "gain": 0,
+      "pan": 0,
+      "mute": false,
+      "solo": false
+    },
+    {
+      "id": "tBass",
+      "name": "Bass",
+      "color": 6,
+      "kind": "synth",
+      "inst": {
+        "type": "mono",
+        "params": {
+          "wave": 3,
+          "cutoff": 520,
+          "res": 0.5,
+          "slope": 1,
+          "envAmt": 1.2,
+          "glide": 0.01,
+          "attack": 0.004,
+          "decay": 0.25,
+          "sustain": 0.7,
+          "release": 0.2,
+          "lfoShape": 0,
+          "lfoRate": 2,
+          "lfoAmt": 0
+        }
+      },
+      "fx": [],
+      "gain": -2,
+      "pan": 0,
+      "mute": false,
+      "solo": false
+    },
+    {
+      "id": "tChords",
+      "name": "Chords",
+      "color": 8,
+      "kind": "synth",
+      "inst": {
+        "type": "poly",
+        "params": {
+          "wave": 0,
+          "spread": 18,
+          "cutoff": 4200,
+          "res": 0.4,
+          "slope": 0,
+          "attack": 0.002,
+          "decay": 1.1,
+          "sustain": 0.18,
+          "release": 0.35,
+          "lfoShape": 0,
+          "lfoRate": 2,
+          "lfoAmt": 0
+        }
+      },
+      "fx": [
+        {
+          "type": "reverb",
+          "on": true,
+          "params": {
+            "size": 2.8,
+            "mix": 0.3
+          }
+        }
+      ],
+      "gain": -4,
+      "pan": 0,
+      "mute": false,
+      "solo": false
+    },
+    {
+      "id": "tLead",
+      "name": "Lead",
+      "color": 3,
+      "kind": "synth",
+      "inst": {
+        "type": "poly",
+        "params": {
+          "wave": 0,
+          "spread": 18,
+          "cutoff": 9000,
+          "res": 1.5,
+          "slope": 0,
+          "attack": 0.005,
+          "decay": 0.18,
+          "sustain": 0.5,
+          "release": 0.3,
+          "lfoShape": 0,
+          "lfoRate": 2,
+          "lfoAmt": 0
+        }
+      },
+      "fx": [
+        {
+          "type": "delay",
+          "on": true,
+          "params": {
+            "time": 2,
+            "fb": 0.35,
+            "mix": 0.25
+          }
+        }
+      ],
+      "gain": -5,
+      "pan": 0,
+      "mute": false,
+      "solo": false
+    },
+    {
+      "id": "busA",
+      "name": "A",
+      "color": 7,
+      "kind": "bus",
+      "inst": {
+        "type": "audiobus",
+        "params": {}
+      },
+      "fx": [
+        {
+          "type": "reverb",
+          "on": true,
+          "params": {
+            "size": 3.6,
+            "mix": 1
+          }
+        }
+      ],
+      "gain": 0,
+      "pan": 0,
+      "mute": false,
+      "solo": false,
+      "output": "master",
+      "locked": true,
+      "send": "A"
+    },
+    {
+      "id": "busB",
+      "name": "B",
+      "color": 9,
+      "kind": "bus",
+      "inst": {
+        "type": "audiobus",
+        "params": {}
+      },
+      "fx": [
+        {
+          "type": "pingpong",
+          "on": true,
+          "params": {
+            "time": 3,
+            "fb": 0.4,
+            "mix": 1
+          }
+        }
+      ],
+      "gain": 0,
+      "pan": 0,
+      "mute": false,
+      "solo": false,
+      "output": "master",
+      "locked": true,
+      "send": "B"
+    },
+    {
+      "id": "busF",
+      "name": "Feedback",
+      "color": 4,
+      "kind": "bus",
+      "inst": {
+        "type": "audiobus",
+        "params": {}
+      },
+      "fx": [
+        {
+          "type": "reverb",
+          "on": true,
+          "params": {
+            "size": 2.4,
+            "mix": 1
+          }
+        }
+      ],
+      "gain": 0,
+      "pan": 0,
+      "mute": false,
+      "solo": false,
+      "output": "master",
+      "locked": true,
+      "send": "F",
+      "sends": {
+        "busF": 0.3
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "id": "s1",
+      "name": "Scene 1"
+    },
+    {
+      "id": "s2",
+      "name": "Scene 2"
+    },
+    {
+      "id": "s3",
+      "name": "Scene 3"
+    },
+    {
+      "id": "s4",
+      "name": "Scene 4"
+    },
+    {
+      "id": "s5",
+      "name": "Scene 5"
+    },
+    {
+      "id": "s6",
+      "name": "Scene 6"
+    }
+  ],
+  "clips": {},
+  "arr": {}
+}

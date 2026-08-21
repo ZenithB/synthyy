@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the generated Info.plist by the Tauri bundler
+     (tauri.conf.json > bundle.macOS.infoPlist). Keys here win over defaults. -->
+<plist version="1.0">
+<dict>
+  <!-- Required (since macOS 10.14) for any audio-input access; the OS kills
+       the process on first capture if it is absent. Shown in the TCC prompt. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Synthtagram uses the microphone and audio inputs to record audio tracks.</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.music</string>
+</dict>
+</plist>

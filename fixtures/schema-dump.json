@@ -1,0 +1,1780 @@
+{
+  "instruments": [
+    {
+      "type": "poly",
+      "params": [
+        {
+          "key": "wave",
+          "label": "Wave",
+          "min": 0,
+          "max": 6,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Saw",
+            "Sqr",
+            "Tri",
+            "Sin",
+            "FatSaw",
+            "FatSqr",
+            "FatTri"
+          ]
+        },
+        {
+          "key": "spread",
+          "label": "Spread",
+          "min": 0,
+          "max": 60,
+          "def": 18
+        },
+        {
+          "key": "cutoff",
+          "label": "Cutoff",
+          "min": 80,
+          "max": 14000,
+          "def": 7000,
+          "exp": true
+        },
+        {
+          "key": "res",
+          "label": "Res",
+          "min": 0,
+          "max": 10,
+          "def": 0.7
+        },
+        {
+          "key": "slope",
+          "label": "Slope",
+          "min": 0,
+          "max": 2,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "12dB",
+            "24dB",
+            "48dB"
+          ]
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.01,
+          "exp": true
+        },
+        {
+          "key": "decay",
+          "label": "Decay",
+          "min": 0.01,
+          "max": 2,
+          "def": 0.15,
+          "exp": true
+        },
+        {
+          "key": "sustain",
+          "label": "Sustain",
+          "min": 0,
+          "max": 1,
+          "def": 0.6
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 4,
+          "def": 0.4,
+          "exp": true
+        },
+        {
+          "key": "lfoShape",
+          "label": "LFO",
+          "min": 0,
+          "max": 3,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Sin",
+            "Tri",
+            "Saw",
+            "Sqr"
+          ]
+        },
+        {
+          "key": "lfoRate",
+          "label": "LFO Rate",
+          "min": 0.05,
+          "max": 16,
+          "def": 2,
+          "exp": true
+        },
+        {
+          "key": "lfoAmt",
+          "label": "LFO Amt",
+          "min": 0,
+          "max": 1,
+          "def": 0
+        }
+      ]
+    },
+    {
+      "type": "duo",
+      "params": [
+        {
+          "key": "harm",
+          "label": "Interval",
+          "min": 0.5,
+          "max": 3,
+          "def": 1.5
+        },
+        {
+          "key": "vibAmt",
+          "label": "Vibrato",
+          "min": 0,
+          "max": 0.6,
+          "def": 0.12
+        },
+        {
+          "key": "vibRate",
+          "label": "Vib Rate",
+          "min": 0.5,
+          "max": 10,
+          "def": 4.5,
+          "exp": true
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.02,
+          "exp": true
+        },
+        {
+          "key": "decay",
+          "label": "Decay",
+          "min": 0.01,
+          "max": 2,
+          "def": 0.3,
+          "exp": true
+        },
+        {
+          "key": "sustain",
+          "label": "Sustain",
+          "min": 0,
+          "max": 1,
+          "def": 0.6
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 4,
+          "def": 0.6,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "fm",
+      "params": [
+        {
+          "key": "harm",
+          "label": "Ratio",
+          "min": 0.25,
+          "max": 8,
+          "def": 3
+        },
+        {
+          "key": "modIdx",
+          "label": "FM Amt",
+          "min": 0.5,
+          "max": 40,
+          "def": 10,
+          "exp": true
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.005,
+          "exp": true
+        },
+        {
+          "key": "decay",
+          "label": "Decay",
+          "min": 0.01,
+          "max": 2,
+          "def": 0.3,
+          "exp": true
+        },
+        {
+          "key": "sustain",
+          "label": "Sustain",
+          "min": 0,
+          "max": 1,
+          "def": 0.4
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 4,
+          "def": 0.6,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "mono",
+      "params": [
+        {
+          "key": "wave",
+          "label": "Wave",
+          "min": 0,
+          "max": 3,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Saw",
+            "Sqr",
+            "Tri",
+            "Sin",
+            "FatSaw",
+            "FatSqr",
+            "FatTri"
+          ]
+        },
+        {
+          "key": "cutoff",
+          "label": "Cutoff",
+          "min": 40,
+          "max": 8000,
+          "def": 900,
+          "exp": true
+        },
+        {
+          "key": "res",
+          "label": "Res",
+          "min": 0,
+          "max": 10,
+          "def": 2
+        },
+        {
+          "key": "slope",
+          "label": "Slope",
+          "min": 0,
+          "max": 2,
+          "def": 1,
+          "int": true,
+          "steps": [
+            "12dB",
+            "24dB",
+            "48dB"
+          ]
+        },
+        {
+          "key": "envAmt",
+          "label": "Env Amt",
+          "min": 0,
+          "max": 6,
+          "def": 2.5
+        },
+        {
+          "key": "glide",
+          "label": "Glide",
+          "min": 0,
+          "max": 0.3,
+          "def": 0.02
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.003,
+          "exp": true
+        },
+        {
+          "key": "decay",
+          "label": "Decay",
+          "min": 0.01,
+          "max": 2,
+          "def": 0.2,
+          "exp": true
+        },
+        {
+          "key": "sustain",
+          "label": "Sustain",
+          "min": 0,
+          "max": 1,
+          "def": 0.45
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 4,
+          "def": 0.25,
+          "exp": true
+        },
+        {
+          "key": "lfoShape",
+          "label": "LFO",
+          "min": 0,
+          "max": 3,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Sin",
+            "Tri",
+            "Saw",
+            "Sqr"
+          ]
+        },
+        {
+          "key": "lfoRate",
+          "label": "LFO Rate",
+          "min": 0.05,
+          "max": 16,
+          "def": 2,
+          "exp": true
+        },
+        {
+          "key": "lfoAmt",
+          "label": "LFO Amt",
+          "min": 0,
+          "max": 1,
+          "def": 0
+        }
+      ]
+    },
+    {
+      "type": "pluck",
+      "params": [
+        {
+          "key": "dampen",
+          "label": "Tone",
+          "min": 500,
+          "max": 12000,
+          "def": 4000,
+          "exp": true
+        },
+        {
+          "key": "res",
+          "label": "Sustain",
+          "min": 0.3,
+          "max": 0.98,
+          "def": 0.93
+        }
+      ]
+    },
+    {
+      "type": "keys",
+      "params": [
+        {
+          "key": "harm",
+          "label": "Color",
+          "min": 0.5,
+          "max": 4,
+          "def": 2
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.01,
+          "exp": true
+        },
+        {
+          "key": "decay",
+          "label": "Decay",
+          "min": 0.01,
+          "max": 2,
+          "def": 0.4,
+          "exp": true
+        },
+        {
+          "key": "sustain",
+          "label": "Sustain",
+          "min": 0,
+          "max": 1,
+          "def": 0.5
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 4,
+          "def": 0.8,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "sampler",
+      "params": [
+        {
+          "key": "tune",
+          "label": "Tune",
+          "min": -24,
+          "max": 24,
+          "def": 0
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 1,
+          "def": 0.005,
+          "exp": true
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 3,
+          "def": 0.4,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "ksampler",
+      "params": [
+        {
+          "key": "root",
+          "label": "Root",
+          "min": 0,
+          "max": 11,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "C",
+            "C#",
+            "D",
+            "D#",
+            "E",
+            "F",
+            "F#",
+            "G",
+            "G#",
+            "A",
+            "A#",
+            "B"
+          ]
+        },
+        {
+          "key": "tune",
+          "label": "Fine",
+          "min": -24,
+          "max": 24,
+          "def": 0
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.004,
+          "exp": true
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 4,
+          "def": 0.4,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "granular",
+      "params": [
+        {
+          "key": "size",
+          "label": "Grain",
+          "min": 0.02,
+          "max": 0.5,
+          "def": 0.12,
+          "exp": true
+        },
+        {
+          "key": "dens",
+          "label": "Density",
+          "min": 2,
+          "max": 80,
+          "def": 18,
+          "exp": true
+        },
+        {
+          "key": "pos",
+          "label": "Position",
+          "min": 0,
+          "max": 1,
+          "def": 0.15
+        },
+        {
+          "key": "spray",
+          "label": "Spray",
+          "min": 0,
+          "max": 1,
+          "def": 0.05
+        },
+        {
+          "key": "pitch",
+          "label": "Pitch",
+          "min": -24,
+          "max": 24,
+          "def": 0
+        },
+        {
+          "key": "pjit",
+          "label": "P.Jitter",
+          "min": 0,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "rev",
+          "label": "Reverse",
+          "min": 0,
+          "max": 1,
+          "def": 0
+        },
+        {
+          "key": "shape",
+          "label": "Shape",
+          "min": 0,
+          "max": 1,
+          "def": 0.5
+        },
+        {
+          "key": "spread",
+          "label": "Spread",
+          "min": 0,
+          "max": 1,
+          "def": 0.6
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.05,
+          "exp": true
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.01,
+          "max": 4,
+          "def": 0.4,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "drum",
+      "params": [
+        {
+          "key": "p0_tune",
+          "label": "Kick Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p0_decay",
+          "label": "Kick Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 0.42,
+          "exp": true
+        },
+        {
+          "key": "p0_level",
+          "label": "Kick Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        },
+        {
+          "key": "p1_tune",
+          "label": "Snare Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p1_decay",
+          "label": "Snare Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 0.18,
+          "exp": true
+        },
+        {
+          "key": "p1_level",
+          "label": "Snare Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        },
+        {
+          "key": "p2_tune",
+          "label": "Clap Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p2_decay",
+          "label": "Clap Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 0.28,
+          "exp": true
+        },
+        {
+          "key": "p2_level",
+          "label": "Clap Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        },
+        {
+          "key": "p3_tune",
+          "label": "Cl Hat Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p3_decay",
+          "label": "Cl Hat Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 0.06,
+          "exp": true
+        },
+        {
+          "key": "p3_level",
+          "label": "Cl Hat Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        },
+        {
+          "key": "p4_tune",
+          "label": "Op Hat Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p4_decay",
+          "label": "Op Hat Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 0.4,
+          "exp": true
+        },
+        {
+          "key": "p4_level",
+          "label": "Op Hat Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        },
+        {
+          "key": "p5_tune",
+          "label": "Lo Tom Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p5_decay",
+          "label": "Lo Tom Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 0.32,
+          "exp": true
+        },
+        {
+          "key": "p5_level",
+          "label": "Lo Tom Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        },
+        {
+          "key": "p6_tune",
+          "label": "Perc Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p6_decay",
+          "label": "Perc Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 0.12,
+          "exp": true
+        },
+        {
+          "key": "p6_level",
+          "label": "Perc Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        },
+        {
+          "key": "p7_tune",
+          "label": "Crash Tune",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "p7_decay",
+          "label": "Crash Decay",
+          "min": 0.03,
+          "max": 2,
+          "def": 1.3,
+          "exp": true
+        },
+        {
+          "key": "p7_level",
+          "label": "Crash Level",
+          "min": -24,
+          "max": 6,
+          "def": 0
+        }
+      ]
+    },
+    {
+      "type": "audiobus",
+      "params": []
+    }
+  ],
+  "effects": [
+    {
+      "type": "eq",
+      "params": [
+        {
+          "key": "low",
+          "label": "Low",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "mid",
+          "label": "Mid",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        },
+        {
+          "key": "high",
+          "label": "High",
+          "min": -12,
+          "max": 12,
+          "def": 0
+        }
+      ]
+    },
+    {
+      "type": "filter",
+      "params": [
+        {
+          "key": "ftype",
+          "label": "Type",
+          "min": 0,
+          "max": 2,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "LP",
+            "HP",
+            "BP"
+          ]
+        },
+        {
+          "key": "freq",
+          "label": "Freq",
+          "min": 40,
+          "max": 18000,
+          "def": 2000,
+          "exp": true
+        },
+        {
+          "key": "q",
+          "label": "Res",
+          "min": 0,
+          "max": 12,
+          "def": 1
+        },
+        {
+          "key": "slope",
+          "label": "Slope",
+          "min": 0,
+          "max": 2,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "12dB",
+            "24dB",
+            "48dB"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "delay",
+      "params": [
+        {
+          "key": "time",
+          "label": "Time",
+          "min": 0,
+          "max": 5,
+          "def": 2,
+          "int": true,
+          "steps": [
+            "1/32",
+            "1/16",
+            "1/8",
+            "3/16",
+            "1/4",
+            "1/2"
+          ]
+        },
+        {
+          "key": "fb",
+          "label": "Feedback",
+          "min": 0,
+          "max": 0.85,
+          "def": 0.35
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.35
+        }
+      ]
+    },
+    {
+      "type": "reverb",
+      "params": [
+        {
+          "key": "size",
+          "label": "Size",
+          "min": 0.2,
+          "max": 10,
+          "def": 2.2,
+          "exp": true
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.3
+        }
+      ]
+    },
+    {
+      "type": "plate",
+      "params": [
+        {
+          "key": "decay",
+          "label": "Decay",
+          "min": 0.3,
+          "max": 8,
+          "def": 1.8,
+          "exp": true
+        },
+        {
+          "key": "predelay",
+          "label": "PreDelay",
+          "min": 0,
+          "max": 0.2,
+          "def": 0.02
+        },
+        {
+          "key": "damp",
+          "label": "Damp",
+          "min": 500,
+          "max": 16000,
+          "def": 6000,
+          "exp": true
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.3
+        }
+      ]
+    },
+    {
+      "type": "eq7",
+      "params": [
+        {
+          "key": "b0_freq",
+          "label": "LoShelf Freq",
+          "min": 20,
+          "max": 20000,
+          "def": 60,
+          "exp": true
+        },
+        {
+          "key": "b0_gain",
+          "label": "LoShelf Gain",
+          "min": -15,
+          "max": 15,
+          "def": 0
+        },
+        {
+          "key": "b0_q",
+          "label": "LoShelf Q",
+          "min": 0.3,
+          "max": 12,
+          "def": 1,
+          "exp": true
+        },
+        {
+          "key": "b1_freq",
+          "label": "Band 2 Freq",
+          "min": 20,
+          "max": 20000,
+          "def": 150,
+          "exp": true
+        },
+        {
+          "key": "b1_gain",
+          "label": "Band 2 Gain",
+          "min": -15,
+          "max": 15,
+          "def": 0
+        },
+        {
+          "key": "b1_q",
+          "label": "Band 2 Q",
+          "min": 0.3,
+          "max": 12,
+          "def": 1,
+          "exp": true
+        },
+        {
+          "key": "b2_freq",
+          "label": "Band 3 Freq",
+          "min": 20,
+          "max": 20000,
+          "def": 400,
+          "exp": true
+        },
+        {
+          "key": "b2_gain",
+          "label": "Band 3 Gain",
+          "min": -15,
+          "max": 15,
+          "def": 0
+        },
+        {
+          "key": "b2_q",
+          "label": "Band 3 Q",
+          "min": 0.3,
+          "max": 12,
+          "def": 1,
+          "exp": true
+        },
+        {
+          "key": "b3_freq",
+          "label": "Band 4 Freq",
+          "min": 20,
+          "max": 20000,
+          "def": 1000,
+          "exp": true
+        },
+        {
+          "key": "b3_gain",
+          "label": "Band 4 Gain",
+          "min": -15,
+          "max": 15,
+          "def": 0
+        },
+        {
+          "key": "b3_q",
+          "label": "Band 4 Q",
+          "min": 0.3,
+          "max": 12,
+          "def": 1,
+          "exp": true
+        },
+        {
+          "key": "b4_freq",
+          "label": "Band 5 Freq",
+          "min": 20,
+          "max": 20000,
+          "def": 2500,
+          "exp": true
+        },
+        {
+          "key": "b4_gain",
+          "label": "Band 5 Gain",
+          "min": -15,
+          "max": 15,
+          "def": 0
+        },
+        {
+          "key": "b4_q",
+          "label": "Band 5 Q",
+          "min": 0.3,
+          "max": 12,
+          "def": 1,
+          "exp": true
+        },
+        {
+          "key": "b5_freq",
+          "label": "Band 6 Freq",
+          "min": 20,
+          "max": 20000,
+          "def": 6000,
+          "exp": true
+        },
+        {
+          "key": "b5_gain",
+          "label": "Band 6 Gain",
+          "min": -15,
+          "max": 15,
+          "def": 0
+        },
+        {
+          "key": "b5_q",
+          "label": "Band 6 Q",
+          "min": 0.3,
+          "max": 12,
+          "def": 1,
+          "exp": true
+        },
+        {
+          "key": "b6_freq",
+          "label": "HiShelf Freq",
+          "min": 20,
+          "max": 20000,
+          "def": 12000,
+          "exp": true
+        },
+        {
+          "key": "b6_gain",
+          "label": "HiShelf Gain",
+          "min": -15,
+          "max": 15,
+          "def": 0
+        },
+        {
+          "key": "b6_q",
+          "label": "HiShelf Q",
+          "min": 0.3,
+          "max": 12,
+          "def": 1,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "chorus",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0.01,
+          "max": 300,
+          "def": 1.5,
+          "exp": true,
+          "rateSwitch": true
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "min": 0,
+          "max": 1,
+          "def": 0.5
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.5
+        }
+      ]
+    },
+    {
+      "type": "dist",
+      "params": [
+        {
+          "key": "amt",
+          "label": "Drive",
+          "min": 0,
+          "max": 1,
+          "def": 0.4
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        }
+      ]
+    },
+    {
+      "type": "crush",
+      "params": [
+        {
+          "key": "bits",
+          "label": "Bits",
+          "min": 1,
+          "max": 16,
+          "def": 8,
+          "int": true
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        }
+      ]
+    },
+    {
+      "type": "comp",
+      "params": [
+        {
+          "key": "thresh",
+          "label": "Thresh",
+          "min": -60,
+          "max": 0,
+          "def": -20
+        },
+        {
+          "key": "ratio",
+          "label": "Ratio",
+          "min": 1,
+          "max": 20,
+          "def": 4
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 0.3,
+          "def": 0.01,
+          "exp": true
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.02,
+          "max": 1,
+          "def": 0.2,
+          "exp": true
+        }
+      ]
+    },
+    {
+      "type": "opto",
+      "params": [
+        {
+          "key": "reduction",
+          "label": "Peak Redux",
+          "min": 0,
+          "max": 1,
+          "def": 0.4
+        },
+        {
+          "key": "gain",
+          "label": "Gain",
+          "min": -12,
+          "max": 24,
+          "def": 0
+        },
+        {
+          "key": "mode",
+          "label": "Mode",
+          "min": 0,
+          "max": 1,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Comp",
+            "Limit"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "mbcomp",
+      "params": [
+        {
+          "key": "mode",
+          "label": "Mode",
+          "min": 0,
+          "max": 1,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Comp",
+            "Expand"
+          ]
+        },
+        {
+          "key": "xlo",
+          "label": "Lo×",
+          "min": 60,
+          "max": 1000,
+          "def": 250,
+          "exp": true
+        },
+        {
+          "key": "xhi",
+          "label": "Hi×",
+          "min": 1000,
+          "max": 12000,
+          "def": 2500,
+          "exp": true
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.001,
+          "max": 0.3,
+          "def": 0.02,
+          "exp": true
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.02,
+          "max": 1,
+          "def": 0.18,
+          "exp": true
+        },
+        {
+          "key": "b0_thresh",
+          "label": "Lo Thr",
+          "min": -60,
+          "max": 0,
+          "def": -24
+        },
+        {
+          "key": "b0_ratio",
+          "label": "Lo Ratio",
+          "min": 1,
+          "max": 20,
+          "def": 2
+        },
+        {
+          "key": "b0_gain",
+          "label": "Lo Gain",
+          "min": -24,
+          "max": 24,
+          "def": 0
+        },
+        {
+          "key": "b1_thresh",
+          "label": "Mid Thr",
+          "min": -60,
+          "max": 0,
+          "def": -24
+        },
+        {
+          "key": "b1_ratio",
+          "label": "Mid Ratio",
+          "min": 1,
+          "max": 20,
+          "def": 2
+        },
+        {
+          "key": "b1_gain",
+          "label": "Mid Gain",
+          "min": -24,
+          "max": 24,
+          "def": 0
+        },
+        {
+          "key": "b2_thresh",
+          "label": "Hi Thr",
+          "min": -60,
+          "max": 0,
+          "def": -24
+        },
+        {
+          "key": "b2_ratio",
+          "label": "Hi Ratio",
+          "min": 1,
+          "max": 20,
+          "def": 2
+        },
+        {
+          "key": "b2_gain",
+          "label": "Hi Gain",
+          "min": -24,
+          "max": 24,
+          "def": 0
+        }
+      ]
+    },
+    {
+      "type": "phaser",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0.01,
+          "max": 300,
+          "def": 0.8,
+          "exp": true,
+          "rateSwitch": true
+        },
+        {
+          "key": "octaves",
+          "label": "Sweep",
+          "min": 1,
+          "max": 6,
+          "def": 3,
+          "int": true
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.5
+        }
+      ]
+    },
+    {
+      "type": "pingpong",
+      "params": [
+        {
+          "key": "time",
+          "label": "Time",
+          "min": 0,
+          "max": 5,
+          "def": 2,
+          "int": true,
+          "steps": [
+            "1/32",
+            "1/16",
+            "1/8",
+            "3/16",
+            "1/4",
+            "1/2"
+          ]
+        },
+        {
+          "key": "fb",
+          "label": "Feedback",
+          "min": 0,
+          "max": 0.85,
+          "def": 0.4
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.3
+        }
+      ]
+    },
+    {
+      "type": "autofilt",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0.01,
+          "max": 300,
+          "def": 1,
+          "exp": true,
+          "rateSwitch": true
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "min": 0,
+          "max": 1,
+          "def": 0.7
+        },
+        {
+          "key": "base",
+          "label": "Base",
+          "min": 80,
+          "max": 4000,
+          "def": 350,
+          "exp": true
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        }
+      ]
+    },
+    {
+      "type": "trem",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0.01,
+          "max": 300,
+          "def": 5,
+          "exp": true,
+          "rateSwitch": true
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "min": 0,
+          "max": 1,
+          "def": 0.6
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        }
+      ]
+    },
+    {
+      "type": "autopan",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0.01,
+          "max": 300,
+          "def": 1.5,
+          "exp": true,
+          "rateSwitch": true
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "min": 0,
+          "max": 1,
+          "def": 0.8
+        }
+      ]
+    },
+    {
+      "type": "vib",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0.01,
+          "max": 300,
+          "def": 5,
+          "exp": true,
+          "rateSwitch": true
+        },
+        {
+          "key": "depth",
+          "label": "Depth",
+          "min": 0,
+          "max": 0.6,
+          "def": 0.15
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        }
+      ]
+    },
+    {
+      "type": "cheby",
+      "params": [
+        {
+          "key": "order",
+          "label": "Order",
+          "min": 2,
+          "max": 14,
+          "def": 3,
+          "int": true
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.35
+        }
+      ]
+    },
+    {
+      "type": "widen",
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "min": 0,
+          "max": 1,
+          "def": 0.8
+        }
+      ]
+    },
+    {
+      "type": "shift",
+      "params": [
+        {
+          "key": "amt",
+          "label": "Shift",
+          "min": -400,
+          "max": 400,
+          "def": 60
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 0.4
+        }
+      ]
+    },
+    {
+      "type": "duck",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0,
+          "max": 5,
+          "def": 1,
+          "int": true,
+          "steps": [
+            "1/2",
+            "1/4",
+            "1/4T",
+            "1/8",
+            "1/8T",
+            "1/16"
+          ]
+        },
+        {
+          "key": "amount",
+          "label": "Amount",
+          "min": 0,
+          "max": 1,
+          "def": 0.7
+        },
+        {
+          "key": "curve",
+          "label": "Release",
+          "min": 0.1,
+          "max": 1,
+          "def": 0.5
+        }
+      ]
+    },
+    {
+      "type": "autotune",
+      "params": [
+        {
+          "key": "amount",
+          "label": "Amount",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        },
+        {
+          "key": "speed",
+          "label": "Speed",
+          "min": 1,
+          "max": 200,
+          "def": 20,
+          "exp": true
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        },
+        {
+          "key": "mode",
+          "label": "Snap",
+          "min": 0,
+          "max": 1,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Key",
+            "Chr"
+          ]
+        }
+      ]
+    }
+  ],
+  "midifx": [
+    {
+      "type": "scale",
+      "params": []
+    },
+    {
+      "type": "chord",
+      "params": [
+        {
+          "key": "i1",
+          "label": "+ Semi 1",
+          "min": -12,
+          "max": 24,
+          "def": 4,
+          "int": true
+        },
+        {
+          "key": "i2",
+          "label": "+ Semi 2",
+          "min": -12,
+          "max": 24,
+          "def": 7,
+          "int": true
+        },
+        {
+          "key": "i3",
+          "label": "+ Semi 3",
+          "min": -12,
+          "max": 24,
+          "def": 0,
+          "int": true
+        }
+      ]
+    },
+    {
+      "type": "arp",
+      "params": [
+        {
+          "key": "rate",
+          "label": "Rate",
+          "min": 0,
+          "max": 5,
+          "def": 3,
+          "int": true,
+          "steps": [
+            "1/4",
+            "1/8",
+            "1/8T",
+            "1/16",
+            "1/16T",
+            "1/32"
+          ]
+        },
+        {
+          "key": "mode",
+          "label": "Mode",
+          "min": 0,
+          "max": 3,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Up",
+            "Down",
+            "Up-Dn",
+            "Rand"
+          ]
+        },
+        {
+          "key": "pat",
+          "label": "Pattern",
+          "min": 0,
+          "max": 3,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Octave",
+            "5ths",
+            "Scale",
+            "Select"
+          ]
+        },
+        {
+          "key": "oct",
+          "label": "Octaves",
+          "min": 1,
+          "max": 4,
+          "def": 1,
+          "int": true
+        },
+        {
+          "key": "gate",
+          "label": "Gate",
+          "min": 0.1,
+          "max": 1,
+          "def": 0.8
+        }
+      ]
+    },
+    {
+      "type": "velo",
+      "params": [
+        {
+          "key": "scale",
+          "label": "Scale",
+          "min": 0,
+          "max": 2,
+          "def": 1
+        },
+        {
+          "key": "rand",
+          "label": "Random",
+          "min": 0,
+          "max": 1,
+          "def": 0
+        }
+      ]
+    },
+    {
+      "type": "rand",
+      "params": [
+        {
+          "key": "chance",
+          "label": "Chance",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        },
+        {
+          "key": "octave",
+          "label": "Oct Jump",
+          "min": 0,
+          "max": 1,
+          "def": 0
+        }
+      ]
+    }
+  ]
+}

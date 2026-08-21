@@ -1,0 +1,17 @@
+[package]
+name = "sf-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sf-dsp.workspace = true
+sf-project.workspace = true
+rtrb.workspace = true
+basedrop.workspace = true
+arc-swap.workspace = true
+
+[dev-dependencies]
+assert_no_alloc.workspace = true
+sf-render.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "sf-dsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Deliberately minimal: sf-dsp depends on nothing but core/libm so every device
+# is a pure, allocation-free sample loop (RUST_REWRITE_PLAN.md §3).
+libm.workspace = true

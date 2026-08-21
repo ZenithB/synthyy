@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from 'react'
 import { getAudioPrefs, setAudioPrefs, AudioPrefs, LatencyMode } from '../audio/prefs'
 import { engine } from '../audio/engine'
+import { isDesktop, nativeAudio, nativeRecord, NativeDevice, NativeStats, NativeStreamInfo, NativeLatency } from '../audio/native'
 import { setUI, useUI } from '../state/store'
 import { Icon } from './icons'
 
@@ -82,6 +83,8 @@ export function AudioSettings() {
           <span className="export-unit">{liveRate} · {liveLat} output latency</span>
         </div>
 
+        {isDesktop() && <NativeAudioSection />}
+
         <div className="export-actions">
           <button className="export-btn" onClick={optimize}><Icon name="bolt" size={13} /> Optimize for fewer glitches</button>
         </div>
@@ -95,5 +98,152 @@ export function AudioSettings() {
         <div className="export-hint">Applying reloads the page to rebuild the audio engine — your project is saved automatically.</div>
       </div>
     </div>
+  )
+}
+
+// ---- desktop-only: direct hardware access via the Rust core (Phase 0) ----
+// Device picker + real buffer sizes + a test tone, with live callback stats
+// (xruns, deadline misses, peak load) straight from the audio callback.
+const NATIVE_BUFFERS = [64, 128, 256, 512]
+
+function NativeAudioSection() {
+  const [devices, setDevices] = useState<NativeDevice[]>([])
+  const [device, setDevice] = useState<string | null>(null)
+  const [buffer, setBuffer] = useState(128)
+  const [stream, setStream] = useState<NativeStreamInfo | null>(null)
+  const [stats, setStats] = useState<NativeStats | null>(null)
+  const [err, setErr] = useState('')
+
+  useEffect(() => { nativeAudio.devices().then(setDevices).catch(() => setDevices([])) }, [])
+  useEffect(() => {
+    if (!stream) return
+    const t = setInterval(() => nativeAudio.stats().then(setStats).catch(() => {}), 500)
+    return () => clearInterval(t)
+  }, [stream])
+  // leaving the dialog unmounts the section — stop any running tone
+  useEffect(() => () => { nativeAudio.stop().catch(() => {}) }, [])
+
+  const start = async () => {
+    setErr('')
+    try { setStream(await nativeAudio.startTone(device, buffer)) }
+    catch (e) { setErr(String(e).slice(0, 120)); setStream(null) }
+  }
+  const stop = () => { nativeAudio.stop().catch(() => {}); setStream(null); setStats(null) }
+
+  return (
+    <>
+      <div className="export-divider" />
+      <div className="export-row">
+        <span className="export-label">Native output</span>
+        <select value={device ?? ''} onChange={e => setDevice(e.target.value || null)}>
+          <option value="">System default</option>
+          {devices.map(d => <option key={d.name} value={d.name}>{d.name}{d.is_default ? ' ★' : ''}</option>)}
+        </select>
+      </div>
+      <div className="export-row">
+        <span className="export-label">Native buffer</span>
+        <div className="seg">
+          {NATIVE_BUFFERS.map(b => (
+            <button key={b} className={buffer === b ? 'on' : ''} onClick={() => setBuffer(b)}>{b}</button>
+          ))}
+        </div>
+      </div>
+      <div className="export-actions">
+        {!stream
+          ? <button className="export-btn" onClick={start}><Icon name="bolt" size={13} /> Play test tone</button>
+          : <button className="export-btn ghost" onClick={stop}>Stop tone</button>}
+      </div>
+      {stream && (
+        <div className="export-hint">
+          {stream.device} @ {(stream.sample_rate / 1000).toFixed(1)} kHz
+          {stream.buffer_frames ? ` · ${stream.buffer_frames} frames (${(stream.buffer_frames / stream.sample_rate * 1000).toFixed(1)} ms)` : ' · default buffer'}
+          {stats && <> · xruns <b>{stats.xruns}</b> · deadline misses <b>{stats.over_budget}</b> · peak load <b>{Math.round(stats.peak_load * 100)}%</b></>}
+        </div>
+      )}
+      {err && <div className="export-hint" style={{ color: '#e66' }}>{err}</div>}
+      <div className="export-hint">Direct hardware access via the Rust audio core — the settings above only affect the browser engine.</div>
+      <NativeInputSection />
+    </>
+  )
+}
+
+// ---- desktop-only: recording input + loopback latency calibration (Phase 6) ----
+// The input stream is separate from the output stream and is opened on demand
+// (here, or by the first track record). "Measure latency" plays a short chirp
+// through the engine output and finds it again on the input — connect a cable
+// from an output to an input, or let the speakers reach the mic.
+const INPUT_KEY = 'sf-native-input'
+
+function NativeInputSection() {
+  const [devices, setDevices] = useState<NativeDevice[]>([])
+  const [device, setDevice] = useState<string | null>(() => localStorage.getItem(INPUT_KEY) || null)
+  const [stream, setStream] = useState<NativeStreamInfo | null>(null)
+  const [lat, setLat] = useState<NativeLatency | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const refreshLat = () => nativeRecord.latencyGet().then(setLat).catch(() => {})
+  useEffect(() => {
+    nativeRecord.inputDevices().then(setDevices).catch(() => setDevices([]))
+    nativeRecord.inputInfo().then(setStream).catch(() => {})
+    void refreshLat()
+  }, [])
+
+  const open = async (name: string | null) => {
+    setMsg('')
+    try {
+      setStream(await nativeRecord.inputStart(name, null))
+      void refreshLat()
+    } catch (e) { setMsg(String(e).slice(0, 120)); setStream(null) }
+  }
+  const pick = (name: string | null) => {
+    setDevice(name)
+    if (name) localStorage.setItem(INPUT_KEY, name); else localStorage.removeItem(INPUT_KEY)
+    void open(name)
+  }
+  const measure = async () => {
+    setBusy(true); setMsg('')
+    try {
+      if (!stream) await open(device)
+      const ms = await nativeRecord.latencyMeasure()
+      setMsg(`Measured round trip: ${ms.toFixed(1)} ms`)
+      void refreshLat()
+    } catch (e) { setMsg(String(e).slice(0, 140)) }
+    setBusy(false)
+  }
+  const reset = async () => { setLat(await nativeRecord.latencySet(null).catch(() => null)); setMsg('') }
+
+  return (
+    <>
+      <div className="export-divider" />
+      <div className="export-row">
+        <span className="export-label">Native input</span>
+        <select value={device ?? ''} onChange={e => pick(e.target.value || null)}>
+          <option value="">System default</option>
+          {devices.map(d => <option key={d.name} value={d.name}>{d.name}{d.is_default ? ' ★' : ''}</option>)}
+        </select>
+      </div>
+      <div className="export-actions">
+        {!stream && <button className="export-btn" onClick={() => open(device)}>Open input</button>}
+        <button className="export-btn" disabled={busy} onClick={measure}><Icon name="bolt" size={13} /> {busy ? 'Measuring…' : 'Measure latency'}</button>
+        {lat?.measured_roundtrip_ms != null && <button className="export-btn ghost" onClick={reset}>Reset</button>}
+      </div>
+      {stream && (
+        <div className="export-hint">
+          {stream.device} @ {(stream.sample_rate / 1000).toFixed(1)} kHz
+          {stream.buffer_frames ? ` · ${stream.buffer_frames} frames` : ' · default buffer'}
+        </div>
+      )}
+      {lat && (
+        <div className="export-hint">
+          Record compensation <b>{lat.compensation_ms.toFixed(1)} ms</b>
+          {lat.measured_roundtrip_ms != null
+            ? <> · measured round trip {lat.measured_roundtrip_ms.toFixed(1)} ms</>
+            : <> · unmeasured (buffer estimate {lat.estimate_ms.toFixed(1)} ms + stream timestamps)</>}
+        </div>
+      )}
+      {msg && <div className="export-hint" style={msg.startsWith('Measured') ? undefined : { color: '#e66' }}>{msg}</div>}
+      <div className="export-hint">Measure with a cable from an output to an input (or speakers near the mic): a short chirp is played and timed on the way back. Recorded takes are shifted by the compensation automatically.</div>
+    </>
   )
 }

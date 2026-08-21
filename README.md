@@ -1,3 +1,11 @@
+# Synthyy
+
+Standalone desktop DAW with a native Rust audio engine (Tauri 2 shell). Forked from Synthtagram (the browser app, kept separate). Start here: `docs/DESKTOP.md`, `docs/RUST_REWRITE_PLAN.md`, `docs/RUST_ARCH.md`.
+
+---
+
+_Original Synthtagram README follows._
+
 # 🎛️ Synthtagram
 
 **Make a song together.** A lightweight, Ableton-inspired DAW that lives in your browser — with Google-Docs-style real-time collaboration. Launch clips, sculpt synths, arrange a track, and share a link so friends can edit the same song *live*, note by note.

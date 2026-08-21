@@ -1,0 +1,168 @@
+{
+  "meta": {
+    "title": "Maximal",
+    "bpm": 133.5,
+    "swing": 0.12,
+    "swingSubdivision": "8n",
+    "humanize": 0.25,
+    "root": 2,
+    "scale": "dorian",
+    "launchQ": 4,
+    "masterGain": -1.5,
+    "loopOn": true,
+    "loopStart": 384,
+    "loopEnd": 1536,
+    "masterAutoOpen": true,
+    "masterAutoParam": "master||gain",
+    "tsTop": 7,
+    "tsBottom": 8
+  },
+  "tracks": [
+    {
+      "id": "tFull",
+      "name": "Everything",
+      "color": 5,
+      "kind": "synth",
+      "inst": {
+        "type": "poly",
+        "params": { "wave": 2, "cutoff": 3200.5, "res": 1.1 },
+        "sampleId": "smp01",
+        "sampleName": "Vox Chop",
+        "out": 3,
+        "padSamples": { "0": "smpKick", "7": "smpCrash" },
+        "padNames": { "0": "Kick X", "7": "Wash" }
+      },
+      "fx": [
+        {
+          "id": "fx1",
+          "type": "duck",
+          "on": true,
+          "params": { "rate": 1, "amount": 0.7, "curve": 0.5 },
+          "out": 1,
+          "srcTrack": "tDrums",
+          "srcPitch": -1
+        }
+      ],
+      "gain": -3.5,
+      "pan": -0.25,
+      "mute": true,
+      "solo": true,
+      "sendA": 0.4,
+      "sendB": 0.1,
+      "output": "busX",
+      "sends": { "busX": 0.5, "busF": 0.2 },
+      "locked": true,
+      "send": "F",
+      "lfos": [
+        {
+          "id": "lfo1",
+          "on": 1,
+          "shape": 4,
+          "sync": 1,
+          "rate": 3,
+          "hz": 2.5,
+          "depth": 0.6,
+          "phase": 0.25,
+          "dest": "fx",
+          "fxId": "fx1",
+          "pkey": "amount",
+          "targets": [
+            { "dest": "inst", "fxId": "", "pkey": "cutoff" },
+            { "dest": "mix", "fxId": "", "pkey": "pan" }
+          ]
+        }
+      ],
+      "macros": [
+        {
+          "name": "Big Knob",
+          "value": 0.75,
+          "targets": [{ "dest": "fx", "fxId": "fx1", "pkey": "amount" }]
+        }
+      ],
+      "midifx": [
+        {
+          "id": "mfx1",
+          "type": "arp",
+          "on": true,
+          "params": { "rate": 3, "mode": 0, "pat": 2, "oct": 2, "gate": 0.8 }
+        }
+      ],
+      "auto": {
+        "mix||gain": [
+          { "t": 0, "v": 0 },
+          { "t": 768, "v": -12.5 }
+        ]
+      },
+      "autoOpen": true,
+      "autoParam": "mix||gain"
+    }
+  ],
+  "scenes": [{ "id": "s1", "name": "One" }, { "name": "Anonymous" }],
+  "clips": {
+    "tFull|s1": {
+      "name": "Full Clip",
+      "color": 11,
+      "len": 768,
+      "notes": {
+        "n1": { "p": 60, "s": 0, "d": 96, "v": 0.9, "pr": 1 },
+        "n2": { "p": 63.5, "s": 96.25, "d": 47.5, "v": 0.5, "pr": 0.6 }
+      },
+      "audio": {
+        "sampleId": "smp01",
+        "sampleName": "Vox Chop",
+        "gainDb": -2.5,
+        "pitch": -7,
+        "rev": 1,
+        "loop": 0,
+        "fadeIn": 0.05,
+        "fadeOut": 0.2,
+        "offset": 0.125,
+        "dur": 1.75,
+        "cents": -35,
+        "xfade": 0.01
+      },
+      "env": {
+        "mix||gain": [
+          { "t": 0, "v": 1 },
+          { "t": 384, "v": 0.25 }
+        ]
+      },
+      "follow": { "on": true, "bars": 2, "action": 3, "chance": 0.85 }
+    }
+  },
+  "arr": {
+    "a1": {
+      "name": "Arr Clip",
+      "color": 2,
+      "len": 384,
+      "notes": { "n9": { "p": 48, "s": 0, "d": 384, "v": 1, "pr": 1 } },
+      "follow": { "on": false, "bars": 1, "action": 0, "chance": 1 },
+      "trackId": "tFull",
+      "start": 1152
+    }
+  },
+  "returns": [
+    {
+      "id": "retA",
+      "name": "A",
+      "fxType": "reverb",
+      "params": { "size": 3.6, "mix": 1 },
+      "gain": -6
+    }
+  ],
+  "masterFx": [
+    {
+      "id": "mfxA",
+      "type": "mbcomp",
+      "on": false,
+      "params": { "mode": 0, "xlo": 250, "xhi": 2500 },
+      "out": 0
+    }
+  ],
+  "masterAuto": {
+    "master||gain": [
+      { "t": 0, "v": 0 },
+      { "t": 1536, "v": -3 }
+    ]
+  }
+}

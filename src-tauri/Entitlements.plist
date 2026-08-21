@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for Synthyy.app
+  (tauri.conf.json > bundle.macOS.entitlements; applied by `codesign` when
+  APPLE_SIGNING_IDENTITY is set). Keep this list minimal: every key here is
+  reviewed by the notarization service and shown to users.
+
+  NOT included, on purpose:
+  - com.apple.security.cs.allow-jit / allow-unsigned-executable-memory:
+    WKWebView runs JavaScriptCore in Apple's own out-of-process
+    com.apple.WebKit.WebContent XPC service, which carries its own JIT
+    entitlements. The host process never JITs, so Tauri apps notarize fine
+    with hardened runtime and none of the cs.* exceptions (Tauri's own
+    release CI signs this way). Do not add them unless a crash log names
+    the main executable.
+  - com.apple.security.app-sandbox: not App Store; sandboxing would break
+    arbitrary-path sample import/export and cpal device enumeration.
+-->
+<plist version="1.0">
+<dict>
+  <!-- CoreAudio input capture for the recording feature (Phase 6).
+       Pairs with NSMicrophoneUsageDescription in Info.plist; without this
+       key a hardened-runtime binary gets silence from AudioUnit input. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>

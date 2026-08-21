@@ -264,6 +264,31 @@ async function store(name: string, bytes: ArrayBuffer, folder = ''): Promise<{ i
   return { id, name }
 }
 
+/** Planar f32 PCM → 32-bit float WAV bytes at `sampleRate` (format 3). The
+ *  sample store persists encoded bytes and decodes on load, so native
+ *  recordings go in through the same door as imported files. */
+export function pcmToWavBytes(channels: Float32Array[], sampleRate: number): ArrayBuffer {
+  const numCh = channels.length
+  const len = channels[0]?.length ?? 0
+  const blockAlign = numCh * 4
+  const dataSize = len * blockAlign
+  const ab = new ArrayBuffer(44 + dataSize)
+  const dv = new DataView(ab)
+  const ws = (off: number, str: string) => { for (let i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i)) }
+  ws(0, 'RIFF'); dv.setUint32(4, 36 + dataSize, true); ws(8, 'WAVE')
+  ws(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 3, true)
+  dv.setUint16(22, numCh, true); dv.setUint32(24, sampleRate, true)
+  dv.setUint32(28, sampleRate * blockAlign, true); dv.setUint16(32, blockAlign, true); dv.setUint16(34, 32, true)
+  ws(36, 'data'); dv.setUint32(40, dataSize, true)
+  let off = 44
+  for (let i = 0; i < len; i++) for (let c = 0; c < numCh; c++) { dv.setFloat32(off, channels[c][i], true); off += 4 }
+  return ab
+}
+
+/** Store a native (desktop) recording: planar PCM at the capture rate. */
+export const addRecordedPcm = (name: string, channels: Float32Array[], sampleRate: number) =>
+  store(name, pcmToWavBytes(channels, sampleRate), 'Recordings')
+
 /** Store locally-generated audio (the Basics test tones) like an imported file. */
 export const addGeneratedSample = (name: string, folder: string, bytes: ArrayBuffer) => store(name, bytes, folder)
 

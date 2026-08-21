@@ -1,0 +1,98 @@
+{
+  "name": "inst-drum",
+  "scope": {
+    "kind": "scene",
+    "sceneId": "s1"
+  },
+  "project": {
+    "meta": {
+      "title": "fixture inst-drum",
+      "bpm": 120,
+      "swing": 0,
+      "swingSubdivision": "16n",
+      "humanize": 0,
+      "root": 9,
+      "scale": "minor",
+      "launchQ": 1,
+      "masterGain": 0,
+      "tsTop": 4,
+      "tsBottom": 4
+    },
+    "tracks": [
+      {
+        "id": "t1",
+        "name": "drum",
+        "color": 3,
+        "kind": "synth",
+        "inst": {
+          "type": "drum",
+          "params": {
+            "p0_tune": -4,
+            "p1_decay": 0.35,
+            "p3_level": -6
+          }
+        },
+        "fx": [],
+        "gain": 0,
+        "pan": 0,
+        "mute": false,
+        "solo": false,
+        "sendA": 0,
+        "sendB": 0
+      }
+    ],
+    "scenes": [
+      {
+        "id": "s1",
+        "name": "1"
+      }
+    ],
+    "clips": {
+      "t1|s1": {
+        "name": "c",
+        "color": 3,
+        "len": 384,
+        "notes": {
+          "n1": {
+            "p": 0,
+            "s": 0,
+            "d": 24,
+            "v": 1,
+            "pr": 1
+          },
+          "n2": {
+            "p": 3,
+            "s": 48,
+            "d": 24,
+            "v": 0.7,
+            "pr": 1
+          },
+          "n3": {
+            "p": 1,
+            "s": 96,
+            "d": 24,
+            "v": 0.9,
+            "pr": 1
+          },
+          "n4": {
+            "p": 4,
+            "s": 144,
+            "d": 24,
+            "v": 0.7,
+            "pr": 1
+          },
+          "n5": {
+            "p": 7,
+            "s": 288,
+            "d": 48,
+            "v": 0.8,
+            "pr": 1
+          }
+        }
+      }
+    },
+    "arr": {},
+    "returns": [],
+    "masterFx": []
+  }
+}

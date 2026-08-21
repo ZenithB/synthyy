@@ -1,0 +1,96 @@
+{
+  "name": "fx-crush",
+  "scope": {
+    "kind": "scene",
+    "sceneId": "s1"
+  },
+  "project": {
+    "meta": {
+      "title": "fixture fx-crush",
+      "bpm": 120,
+      "swing": 0,
+      "swingSubdivision": "16n",
+      "humanize": 0,
+      "root": 9,
+      "scale": "minor",
+      "launchQ": 1,
+      "masterGain": 0,
+      "tsTop": 4,
+      "tsBottom": 4
+    },
+    "tracks": [
+      {
+        "id": "t1",
+        "name": "mono+crush",
+        "color": 3,
+        "kind": "synth",
+        "inst": {
+          "type": "mono",
+          "params": {}
+        },
+        "fx": [
+          {
+            "type": "crush",
+            "on": true,
+            "params": {
+              "bits": 4,
+              "mix": 1
+            }
+          }
+        ],
+        "gain": 0,
+        "pan": 0,
+        "mute": false,
+        "solo": false,
+        "sendA": 0,
+        "sendB": 0
+      }
+    ],
+    "scenes": [
+      {
+        "id": "s1",
+        "name": "1"
+      }
+    ],
+    "clips": {
+      "t1|s1": {
+        "name": "c",
+        "color": 3,
+        "len": 384,
+        "notes": {
+          "n1": {
+            "p": 48,
+            "s": 0,
+            "d": 84,
+            "v": 0.9,
+            "pr": 1
+          },
+          "n2": {
+            "p": 52,
+            "s": 96,
+            "d": 84,
+            "v": 0.9,
+            "pr": 1
+          },
+          "n3": {
+            "p": 55,
+            "s": 192,
+            "d": 84,
+            "v": 0.9,
+            "pr": 1
+          },
+          "n4": {
+            "p": 60,
+            "s": 288,
+            "d": 84,
+            "v": 0.9,
+            "pr": 1
+          }
+        }
+      }
+    },
+    "arr": {},
+    "returns": [],
+    "masterFx": []
+  }
+}

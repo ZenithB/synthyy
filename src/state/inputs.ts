@@ -4,6 +4,10 @@
 // localStorage; the device list is refreshed on demand (labels need mic
 // permission, so we request it once when the user first opens a picker).
 
+import { isDesktop, nativeRecord } from '../audio/native'
+
+// On desktop the "deviceId" is the native (cpal) device NAME — stable across
+// sessions, and what `input_start` wants.
 export type InputDevice = { deviceId: string; label: string }
 
 let devices: InputDevice[] = []
@@ -18,6 +22,13 @@ export function inputDevices(): InputDevice[] { return devices }
 /** Enumerate audio inputs. Labels are blank until mic permission is granted, so
  *  the caller can pass `prompt` to request a one-shot stream first. */
 export async function refreshInputDevices(prompt = false): Promise<InputDevice[]> {
+  if (isDesktop()) {
+    try {
+      devices = (await nativeRecord.inputDevices()).map(d => ({ deviceId: d.name, label: d.is_default ? `${d.name} ★` : d.name }))
+      emit()
+    } catch { /* native enumeration failed — keep the old list */ }
+    return devices
+  }
   try {
     if (prompt && navigator.mediaDevices?.getUserMedia) {
       try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()) } catch { /* denied — labels stay blank */ }

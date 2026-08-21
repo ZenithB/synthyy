@@ -1,0 +1,22 @@
+[package]
+name = "sf-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sf-dsp.workspace = true
+sf-engine.workspace = true
+sf-project.workspace = true
+cpal.workspace = true
+rtrb.workspace = true
+
+[dev-dependencies]
+# examples/play-project.rs: parse + default-fill a ProjectJSON from disk
+sf-render.workspace = true
+serde_json.workspace = true
+
+# ASIO lands later behind a feature flag (RUST_REWRITE_PLAN.md §9 — SDK licensing).
+[features]
+default = []

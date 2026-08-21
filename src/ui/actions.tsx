@@ -15,7 +15,8 @@ import { setUI, toast, ui } from '../state/store'
 import { setPresence } from '../state/net'
 import { engine } from '../audio/engine'
 import { meta } from '../state/doc'
-import { getSampleBuffer, importSampleFilesBulk, looksLikeAudio, startInputRecording } from '../audio/samples'
+import { getSampleBuffer, importSampleFilesBulk, looksLikeAudio, startInputRecording, addRecordedPcm, InputRecording } from '../audio/samples'
+import { isDesktop, nativeRecord, b64ToF32 } from '../audio/native'
 import { trackInput } from '../state/inputs'
 import { DRUM_PACKS, packSampleId, ROLE_LABEL, RoleName } from '../audio/drumpacks'
 import { DEFAULT_PROJECT, demoProject, DRUM_KITS, InstPreset, MidiLoop, Progression, progressionClip, clipInKey } from '../packs'
@@ -309,7 +310,35 @@ export function addAudio(): string {
 // drops it as an audio clip — at the playhead in Arrangement, or into a scene
 // slot in Session. State is local (one recording at a time); the UI polls
 // isTrackRecording to light the button.
-type ActiveRec = { trackId: string; startTick: number; arr: boolean; sceneId: string | null; stop: () => Promise<import('../audio/samples').InputRecording | null> }
+type ActiveRec = { trackId: string; startTick: number; arr: boolean; sceneId: string | null; stop: () => Promise<InputRecording | null> }
+
+/** Desktop: record through the native input stream (sf-io). The take comes
+ *  back as PCM ALREADY shifted by the measured/derived latency compensation,
+ *  anchored to the engine playhead at arm time — so `inputLatencySec` is
+ *  reported as -1 to tell the caller "no further trimming". */
+let nativeInputDevice: string | null | undefined   // undefined = stream not opened yet
+async function startNativeInputRecording(deviceName: string): Promise<{ stop: () => Promise<InputRecording | null>; startTick: number | null } | null> {
+  const want = deviceName || null
+  if (nativeInputDevice === undefined || nativeInputDevice !== want || !(await nativeRecord.inputInfo().catch(() => null))) {
+    await nativeRecord.inputStart(want, null)
+    nativeInputDevice = want
+  }
+  const t0 = await nativeRecord.takeStart()
+  return {
+    startTick: t0.playing ? t0.playhead_ticks : null,
+    stop: async () => {
+      try {
+        const pcm = await nativeRecord.takeStop()
+        const chans = [b64ToF32(pcm.l_b64)]
+        if (pcm.r_b64) chans.push(b64ToF32(pcm.r_b64))
+        if (!chans[0].length) return null
+        const stamp = new Date().toISOString().slice(11, 19)
+        const rec = await addRecordedPcm(`Rec ${stamp}`, chans, pcm.sample_rate)
+        return { ...rec, durationSec: chans[0].length / pcm.sample_rate, inputLatencySec: -1 }
+      } catch (e) { console.error(e); return null }
+    },
+  }
+}
 let activeRec: ActiveRec | null = null
 const recListeners = new Set<() => void>()
 export function subscribeRec(fn: () => void) { recListeners.add(fn); return () => { recListeners.delete(fn) } }
@@ -350,7 +379,8 @@ export async function toggleTrackRecord(trackId: string) {
     // so the performance lands where the performer meant it, and anchor the clip
     // to where capture actually began (rec.startTick, taken AFTER getUserMedia
     // resolved so the device-open delay isn't baked in).
-    const lat = recordLatencySec(res.inputLatencySec)
+    // (desktop takes arrive pre-compensated by the native engine → lat 0)
+    const lat = res.inputLatencySec < 0 ? 0 : recordLatencySec(res.inputLatencySec)
     const bpm = meta.get('bpm') ?? 120
     const bodySec = Math.max(0.05, res.durationSec - lat)
     const lenTicks = Math.max(BAR / 8, Math.round(bodySec * (bpm / 60) * 96))
@@ -370,20 +400,24 @@ export async function toggleTrackRecord(trackId: string) {
   const t = trackById(trackId)
   if (!t || t.get('kind') !== 'audio') { toast('Recording is for audio tracks'); return }
   try {
-    const handle = await startInputRecording(trackInput(trackId))
+    const handle = isDesktop()
+      ? await startNativeInputRecording(trackInput(trackId))
+      : await startInputRecording(trackInput(trackId))
     if (!handle) { toast('Could not open the input'); return }
     // Anchor NOW — after the mic actually opened — so capture-offset 0 maps to
     // this transport tick (the getUserMedia setup delay is already elapsed).
+    // Native takes report the engine's own playhead at arm time.
+    const nativeTick = (handle as { startTick?: number | null }).startTick
     const arrMode = ui.view === 'arr'
     activeRec = {
       trackId, stop: handle.stop, arr: arrMode,
-      startTick: engine.playing ? engine.positionTicks() : engine.arrSeekTicks,
+      startTick: typeof nativeTick === 'number' ? nativeTick : engine.playing ? engine.positionTicks() : engine.arrSeekTicks,
       sceneId: arrMode ? null : targetScene(trackId),
     }
     emitRec()
     toast('Recording… click again to stop')
-  } catch {
-    toast('Microphone/input permission denied')
+  } catch (e) {
+    toast(isDesktop() ? `Could not open the input: ${String(e).slice(0, 80)}` : 'Microphone/input permission denied')
   }
 }
 
