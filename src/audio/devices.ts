@@ -109,7 +109,11 @@ function makeRate(p: Record<string, number>, apply: (hz: number) => void) {
 export type Fx = {
   node: Tone.ToneAudioNode
   set: (key: string, v: number) => void
-  tick?: (posTicks: number, playing: boolean, bpm: number) => void
+  // `time` is the audio-context time the tick applies to. It MUST be passed on
+  // the offline render path: Tone.Offline restores the global context to the
+  // LIVE one before awaiting the render, so Tone.now() there returns live
+  // wall-clock — scheduling past the end of the bounce (the inert-duck bug).
+  tick?: (posTicks: number, playing: boolean, bpm: number, time?: number) => void
   // Effects that need to analyse their *input* (e.g. Auto-Tune pitch detection)
   // expose a raw AnalyserNode; the engine taps the pre-effect signal into it.
   detect?: AnalyserNode
@@ -842,13 +846,18 @@ class Eq7 extends Tone.ToneAudioNode {
 // when the module isn't registered on the current context (preload failed or
 // timed out) — callers fall back to the original Tone composite so audio never
 // breaks. Registered live by engine.doStart and per-render by render.ts.
+// Tone's OFFLINE context is a standardized-audio-context wrapper, not a native
+// BaseAudioContext, so `new AudioWorkletNode(rawContext, …)` throws
+// "parameter 1 is not of type 'BaseAudioContext'" during an export and every
+// worklet device silently degraded (mbcomp → passthrough) in the bounce.
+// context.createAudioWorkletNode() picks the native constructor for a native
+// context and the wrapper-aware one otherwise, so live and offline both work.
 function fxWorkletNode(name: string, init: Record<string, number>): AudioWorkletNode | null {
   try {
-    const ctx = Tone.getContext().rawContext as AudioContext
-    const node = new AudioWorkletNode(ctx, name, {
+    const node = Tone.getContext().createAudioWorkletNode(name, {
       numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
       channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
-    })
+    }) as unknown as AudioWorkletNode
     node.port.postMessage({ init })
     return node
   } catch { return null }
@@ -1010,13 +1019,14 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
       // Single AudioWorklet node (sf-mbdyn): 3-band crossover + per-band comp or
       // expander + sum. Module is preloaded at engine start; if it isn't ready
       // yet (or in a context without it), degrade to a clean passthrough.
-      const ctx = Tone.getContext().rawContext as AudioContext
       let grLast = [0, 0, 0]
       try {
-        const node = new AudioWorkletNode(ctx, 'sf-mbdyn', {
+        // context-aware factory: a raw `new AudioWorkletNode` throws on Tone's
+        // offline (standardized-audio-context) wrapper — see fxWorkletNode.
+        const node = Tone.getContext().createAudioWorkletNode('sf-mbdyn', {
           numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
           channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
-        })
+        }) as unknown as AudioWorkletNode
         node.port.postMessage({ init: p })
         node.port.onmessage = e => { if (e.data?.gr) grLast = e.data.gr as number[] }
         return {
@@ -1177,19 +1187,20 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
           const at = when ?? Tone.now()
           if (at > trigAt) trigAt = at
         },
-        tick: (posTicks, _playing, bpm) => {
+        tick: (posTicks, _playing, bpm, time) => {
+          const at = time ?? Tone.now()
           const cyc = DUCK_DIV_TICKS[Math.max(0, Math.min(DUCK_DIV_TICKS.length - 1, rate))] || 96
           let phase: number
           if (srcOn) {
-            if (trigAt < 0) { node.gain.setTargetAtTime(1, Tone.now(), 0.004); return }
+            if (trigAt < 0) { node.gain.setTargetAtTime(1, at, 0.004); return }
             const cycSec = cyc * (60 / (Math.max(1, bpm || 120) * 96))   // ticks → seconds
-            phase = Math.min(1, Math.max(0, (Tone.now() - trigAt) / cycSec))
+            phase = Math.min(1, Math.max(0, (at - trigAt) / cycSec))
           } else {
             phase = (((posTicks % cyc) + cyc) % cyc) / cyc
           }
           const rec = Math.pow(phase, 0.35 + curve * 1.6) // recovery shape
           const g = (1 - amount) + amount * rec
-          node.gain.setTargetAtTime(Math.max(0, g), Tone.now(), 0.004)
+          node.gain.setTargetAtTime(Math.max(0, g), at, 0.004)
         },
         dispose: () => node.dispose(),
       }

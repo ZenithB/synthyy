@@ -9,6 +9,8 @@
 //! legally carry fractions.
 
 use serde::{Deserialize, Serialize};
+
+use crate::loose::{de_bool, de_bool_opt, de_num, de_num_opt};
 use std::collections::BTreeMap;
 
 /// `Record<string, number>` — device/fx parameter maps keyed by schema key.
@@ -18,17 +20,24 @@ pub type Params = BTreeMap<String, f64>;
 /// velocity 0..1, probability 0..1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Note {
+    #[serde(deserialize_with = "de_num")]
     pub p: f64,
+    #[serde(deserialize_with = "de_num")]
     pub s: f64,
+    #[serde(deserialize_with = "de_num")]
     pub d: f64,
+    #[serde(deserialize_with = "de_num")]
     pub v: f64,
+    #[serde(deserialize_with = "de_num")]
     pub pr: f64,
 }
 
 /// One automation breakpoint: `{ t, v }` (t in ticks).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AutoPoint {
+    #[serde(deserialize_with = "de_num")]
     pub t: f64,
+    #[serde(deserialize_with = "de_num")]
     pub v: f64,
 }
 
@@ -58,35 +67,46 @@ pub enum SendBus {
 pub struct AudioClipData {
     pub sample_id: String,
     pub sample_name: String,
+    #[serde(deserialize_with = "de_num")]
     pub gain_db: f64,
+    #[serde(deserialize_with = "de_num")]
     pub pitch: f64,
+    #[serde(deserialize_with = "de_num")]
     pub rev: f64,
     pub r#loop: f64,
+    #[serde(deserialize_with = "de_num")]
     pub fade_in: f64,
+    #[serde(deserialize_with = "de_num")]
     pub fade_out: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub offset: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub dur: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub cents: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub xfade: Option<f64>,
 }
 
 /// Clip follow action: `{ on, bars, action, chance }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FollowJSON {
+    #[serde(deserialize_with = "de_bool")]
     pub on: bool,
+    #[serde(deserialize_with = "de_num")]
     pub bars: f64,
+    #[serde(deserialize_with = "de_num")]
     pub action: f64,
+    #[serde(deserialize_with = "de_num")]
     pub chance: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClipJSON {
     pub name: String,
+    #[serde(deserialize_with = "de_num")]
     pub color: f64,
+    #[serde(deserialize_with = "de_num")]
     pub len: f64,
     pub notes: BTreeMap<String, Note>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -104,6 +124,7 @@ pub struct ArrClipJSON {
     #[serde(flatten)]
     pub clip: ClipJSON,
     pub track_id: String,
+    #[serde(deserialize_with = "de_num")]
     pub start: f64,
 }
 
@@ -113,15 +134,16 @@ pub struct FxJSON {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub r#type: String,
+    #[serde(deserialize_with = "de_bool")]
     pub on: bool,
     pub params: Params,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub out: Option<f64>,
     /// Sidechain trigger source (duck): track id, '' = tempo mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src_track: Option<String>,
     /// Pad index within a drum track, -1 = any note on the track.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub src_pitch: Option<f64>,
 }
 
@@ -139,12 +161,19 @@ pub struct ModTarget {
 pub struct LfoJSON {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(deserialize_with = "de_num")]
     pub on: f64,
+    #[serde(deserialize_with = "de_num")]
     pub shape: f64,
+    #[serde(deserialize_with = "de_num")]
     pub sync: f64,
+    #[serde(deserialize_with = "de_num")]
     pub rate: f64,
+    #[serde(deserialize_with = "de_num")]
     pub hz: f64,
+    #[serde(deserialize_with = "de_num")]
     pub depth: f64,
+    #[serde(deserialize_with = "de_num")]
     pub phase: f64,
     pub dest: String,
     pub fx_id: String,
@@ -156,6 +185,7 @@ pub struct LfoJSON {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MacroJSON {
     pub name: String,
+    #[serde(deserialize_with = "de_num")]
     pub value: f64,
     pub targets: Vec<ModTarget>,
 }
@@ -165,6 +195,7 @@ pub struct MidiFxJSON {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub r#type: String,
+    #[serde(deserialize_with = "de_bool")]
     pub on: bool,
     pub params: Params,
 }
@@ -177,6 +208,7 @@ pub struct ReturnJSON {
     pub name: String,
     pub fx_type: String,
     pub params: Params,
+    #[serde(deserialize_with = "de_num")]
     pub gain: f64,
 }
 
@@ -190,7 +222,7 @@ pub struct InstJSON {
     pub sample_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub out: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pad_samples: Option<BTreeMap<String, String>>,
@@ -204,17 +236,22 @@ pub struct TrackJSON {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub name: String,
+    #[serde(deserialize_with = "de_num")]
     pub color: f64,
     pub kind: TrackKind,
     pub inst: InstJSON,
     pub fx: Vec<FxJSON>,
+    #[serde(deserialize_with = "de_num")]
     pub gain: f64,
+    #[serde(deserialize_with = "de_num")]
     pub pan: f64,
+    #[serde(deserialize_with = "de_bool")]
     pub mute: bool,
+    #[serde(deserialize_with = "de_bool")]
     pub solo: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub send_a: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub send_b: Option<f64>,
     /// Routing target for buses: `'master'` | busTrackId.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -223,7 +260,7 @@ pub struct TrackJSON {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sends: Option<BTreeMap<String, f64>>,
     /// Built-in (e.g. the A/B send buses) — cannot be deleted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_bool_opt")]
     pub locked: Option<bool>,
     /// Marks the built-in send buses (id-independent): A, B, or Feedback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -238,7 +275,7 @@ pub struct TrackJSON {
     /// absolute song ticks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<AutoMap>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_bool_opt")]
     pub auto_open: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_param: Option<String>,
@@ -248,30 +285,34 @@ pub struct TrackJSON {
 #[serde(rename_all = "camelCase")]
 pub struct MetaJSON {
     pub title: String,
+    #[serde(deserialize_with = "de_num")]
     pub bpm: f64,
+    #[serde(deserialize_with = "de_num")]
     pub swing: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swing_subdivision: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub humanize: Option<f64>,
+    #[serde(deserialize_with = "de_num")]
     pub root: f64,
     pub scale: String,
+    #[serde(deserialize_with = "de_num")]
     pub launch_q: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub master_gain: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_bool_opt")]
     pub loop_on: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub loop_start: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub loop_end: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_bool_opt")]
     pub master_auto_open: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub master_auto_param: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub ts_top: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_num_opt")]
     pub ts_bottom: Option<f64>,
 }
 

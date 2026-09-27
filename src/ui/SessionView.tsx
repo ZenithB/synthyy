@@ -19,7 +19,7 @@ import { Icon } from './icons'
 import { TrackInput } from './TrackInput'
 import {
   selectClip, selectTrack, copyClipRef, pasteClipTo, hasClipboard,
-  addSynthTrack, addDrumTrack, addAudio, addBus, attemptSetOutput,
+  addSynthTrack, addDrumTrack, addAudio, addBus, addFeedbackChunkTracks, attemptSetOutput,
   duplicateClipToNextScene, loadLoop, loadProgression, trackHeaderMenu, assignKitToTrack,
   placeSampleInSlot,
 } from './actions'
@@ -428,6 +428,7 @@ export function SessionView() {
             <button className="add-btn" onClick={() => addDrumTrack()} data-info="Add a drum track">＋ Drums</button>
             <button className="add-btn" onClick={() => addAudio()} data-info="Add a blank audio track (import or record audio clips)">＋ Audio</button>
             <button className="add-btn" onClick={() => addBus()} data-info="Add a bus — an fx-only track that other tracks send to">＋ Bus</button>
+            <button className="add-btn" onClick={() => addFeedbackChunkTracks()} data-info="Add a feedback chunk — two buses looping into each other, each tapped to master by its own return">＋ Feedback Chunk</button>
           </div>
         </div>
 

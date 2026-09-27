@@ -1087,6 +1087,43 @@ export function addBusTrack(name: string, color: number): string {
   })
 }
 
+/**
+ * Feedback Chunk: a pair of buses whose outputs feed EACH OTHER, plus a return
+ * for each that taps the loop into master.
+ *
+ *   Loop 1 ─output→ Loop 2 ─output→ Loop 1   (the infinite loop)
+ *   Loop 1 ─send 100%→ Return 1 ─output→ master
+ *   Loop 2 ─send 100%→ Return 2 ─output→ master
+ *
+ * Send audio into Loop 1 and it circulates between the two loop buses forever;
+ * the returns tap that circulating signal off to the mix, so you can process
+ * each lap (put effects on the loop buses) without breaking the cycle.
+ *
+ * Doc order matters: Loop 1 before Loop 2 means only ONE edge closes the cycle
+ * (Loop 2 → Loop 1), which the engine routes through its feedback delay — the
+ * loop buses' faders set how much survives each lap.
+ */
+export function addFeedbackChunk(colors: [number, number, number, number]): {
+  loop1: string; loop2: string; ret1: string; ret2: string
+} {
+  const loop1 = id8(), loop2 = id8(), ret1 = id8(), ret2 = id8()
+  const bus = (id: string, name: string, color: number, output: string, sends?: Record<string, number>): TrackJSON => ({
+    id, name, color, kind: 'bus',
+    inst: { type: 'audiobus', params: {} },
+    fx: [], gain: 0, pan: 0, mute: false, solo: false,
+    output, sends,
+  })
+  mutate('Add feedback chunk', () => {
+    tracks.push([
+      yTrack(bus(loop1, 'Loop 1', colors[0], loop2, { [ret1]: 1 })),
+      yTrack(bus(loop2, 'Loop 2', colors[1], loop1, { [ret2]: 1 })),
+      yTrack(bus(ret1, 'Return 1', colors[2], 'master')),
+      yTrack(bus(ret2, 'Return 2', colors[3], 'master')),
+    ])
+  })
+  return { loop1, loop2, ret1, ret2 }
+}
+
 export function createAudioClip(trackId: string, sceneId: string, sampleId: string, sampleName: string, durTicks: number, color: number, audioOverrides: Record<string, number> = {}): ClipRef {
   const m = jsonToClipMap({
     name: sampleName, color, len: durTicks, notes: {},

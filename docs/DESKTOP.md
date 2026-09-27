@@ -68,6 +68,11 @@ cargo run --release -p sf-io --example soak -- src-tauri/assets/demo-project.jso
 cargo run -p sf-io --example record-probe
 ```
 
+```bash
+# "Record Output" end-to-end: play 5 s, then capture 3 s of the master
+cargo run -p sf-io --example record-master -- src-tauri/assets/demo-project.json 5 3
+```
+
 Recording on desktop: arm a track's input (Track Input panel) and record — takes
 come from the native input stream, latency-compensated. Audio Settings → native
 section has the input picker and **Measure latency** (needs a loopback path:

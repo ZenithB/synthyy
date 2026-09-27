@@ -6,7 +6,7 @@ import { ClipRef, CLIP_COLORS, BAR, clamp } from '../types'
 import {
   addTrack, addScene, clipKey, clips, duplicateClipTo, getClipMap, clipToJSON,
   jsonToClipMap, loadProject, mutate, scenes, setInstrument, trackById, ClipJSON, TrackJSON,
-  addAudioTrack, createAudioClip, addBusTrack, tracks, busCanReach, setTrackOutput, setBusSend,
+  addAudioTrack, createAudioClip, addBusTrack, addFeedbackChunk, tracks, busCanReach, setTrackOutput, setBusSend,
   setTrackColor, duplicateTrack, moveTrack, removeTrack, assignDrumKit, addArrClip, arr, id8,
   splitArrClip,
 } from '../state/doc'
@@ -20,6 +20,7 @@ import { isDesktop, nativeRecord, b64ToF32 } from '../audio/native'
 import { trackInput } from '../state/inputs'
 import { DRUM_PACKS, packSampleId, ROLE_LABEL, RoleName } from '../audio/drumpacks'
 import { DEFAULT_PROJECT, demoProject, DRUM_KITS, InstPreset, MidiLoop, Progression, progressionClip, clipInKey } from '../packs'
+import { confirmDialog } from './dialogs'
 
 // Shared track-header right-click menu, so Session and Arrangement headers offer
 // the same options. `onRename` lets each view drive its own inline editor;
@@ -49,7 +50,7 @@ export function trackHeaderMenu(trackId: string, onRename: () => void, vertical 
       { label: vertical ? '↑ Move up' : '← Move left', fn: () => moveTrack(trackId, -1) },
       { label: vertical ? '↓ Move down' : '→ Move right', fn: () => moveTrack(trackId, 1) },
       'sep',
-      { label: 'Delete track', fn: () => { if (confirm(`Delete "${t?.get('name')}"?`)) removeTrack(trackId) }, danger: true },
+      { label: 'Delete track', fn: async () => { if (await confirmDialog(`Delete "${t?.get('name')}"?`, { danger: true })) removeTrack(trackId) }, danger: true },
     )
   }
   return items
@@ -421,6 +422,14 @@ export async function toggleTrackRecord(trackId: string) {
   }
 }
 
+/** Four buses wired into a feedback loop with returns (see addFeedbackChunk). */
+export function addFeedbackChunkTracks(): string {
+  const { loop1 } = addFeedbackChunk([nextColor(), nextColor(), nextColor(), nextColor()])
+  selectTrack(loop1)
+  toast('Feedback chunk added — send a track to Loop 1')
+  return loop1
+}
+
 export function addBus(): string {
   const n = tracks.toArray().filter(t => t.get('kind') === 'bus').length + 1
   const id = addBusTrack(`Bus ${n}`, nextColor())
@@ -430,8 +439,11 @@ export function addBus(): string {
 
 /**
  * Set a bus output, popping the themed feedback-loop warning first if the route
- * would create an audio cycle. On Continue we apply anyway (Web Audio drops a
- * delay-less cycle, so it's harmless); on Undo we leave the route unchanged.
+ * would create an audio cycle. On Continue we apply anyway; on Undo we leave
+ * the route unchanged. On desktop the native engine REGENERATES such a cycle
+ * through a short delay (that's what makes a Feedback Chunk loop), so the
+ * warning is about a real, audible loop — the bus faders control how much
+ * survives each lap, and the master limiter catches a runaway.
  */
 export function attemptSetOutput(trackId: string, target: string) {
   const name = trackById(trackId)?.get('name') ?? 'bus'
@@ -521,8 +533,8 @@ export function loadDemo() {
   toast('Demo song loaded — press a scene number to jam')
 }
 
-export function newProject() {
-  if (!confirm('Start a new empty project? (You can undo this)')) return
+export async function newProject() {
+  if (!await confirmDialog('Start a new empty project? (You can undo this)')) return
   engine.stopAll()
   loadProject({ ...DEFAULT_PROJECT, meta: { ...DEFAULT_PROJECT.meta } }, 'New project')
   setUI({ selClip: null })
@@ -533,9 +545,16 @@ export function importProjectFile() {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = '.json,application/json'
+  // The element must be IN the document before .click(): a detached input is
+  // not reliably activated by WKWebView (the desktop shell's webview), where
+  // the picker simply never opened. Hidden off-screen, removed after use.
+  input.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0'
+  document.body.appendChild(input)
+  const cleanup = () => { try { input.remove() } catch { /* ok */ } }
+  input.oncancel = cleanup
   input.onchange = async () => {
     const f = input.files?.[0]
-    if (!f) return
+    if (!f) { cleanup(); return }
     try {
       const json = JSON.parse(await f.text())
       if (!json.meta || !json.tracks) throw new Error('bad file')
@@ -544,6 +563,8 @@ export function importProjectFile() {
       toast(`Imported "${json.meta.title}"`)
     } catch {
       toast('Could not read that file')
+    } finally {
+      cleanup()
     }
   }
   input.click()

@@ -6,6 +6,7 @@ import { ParamSpec, normFromSpec, valueFromSpec } from '../audio/schema'
 import { clamp } from '../types'
 import { useRaf } from './hooks'
 import { Icon } from './icons'
+import { promptDialog } from './dialogs'
 
 export function capturePointer(e: React.PointerEvent) {
   try { (e.target as HTMLElement).setPointerCapture(e.pointerId) } catch { /* synthetic events */ }
@@ -229,8 +230,8 @@ export function NumberDrag({ value, onChange, min, max, step = 1, suffix = '', i
           () => setDrag(false),
         )
       }}
-      onDoubleClick={() => {
-        const v = prompt('Value', String(value))
+      onDoubleClick={async () => {
+        const v = await promptDialog('Value', String(value))
         if (v && !isNaN(+v)) onChange(clamp(+v, min, max))
       }}
     >

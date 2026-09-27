@@ -1,13 +1,19 @@
 # Parity ledger — Rust engine vs browser goldens
 
-Final numbers after the calibration pass (2026-08-21). Spectral similarity =
-mean log-magnitude cosine over 2048-sample frames (1.0 = identical spectrum
-shape). ΔRMS = rendered − golden, dB. Null scores are meaningless against Tone
-composites (no phase alignment) and are omitted. Two goldens are known-bad
-(browser OFFLINE-render bugs, flagged as a follow-up task): the browser export
-silently skips mbcomp (worklet registration race → passthrough) and never ticks
-tempo-mode duck. The master limiter now mirrors Tone.Limiter(−1) (Blink
-DynamicsCompressor kernel, ratio 20 / knee 30) instead of a brickwall.
+Spectral similarity = mean log-magnitude cosine over 2048-sample frames
+(1.0 = identical spectrum shape). ΔRMS = rendered − golden, dB. Null scores are
+meaningless against Tone composites (no phase alignment) and are omitted.
+
+**Two browser bugs were found and fixed by this harness** (2026-08-21): the
+offline export constructed worklet nodes with `new AudioWorkletNode(rawContext…)`,
+which throws on Tone's offline standardized-audio-context wrapper — so mbcomp
+(and any worklet device) silently rendered as a PASSTHROUGH in every bounce; and
+the sidechain duck scheduled its gain with `Tone.now()`, which reads the global
+context that Tone.Offline restores to the LIVE one before rendering, pushing
+every gain change past the end of the bounce (inert duck). Both are fixed in
+`devices.ts`/`render.ts` and their goldens regenerated. The Rust ports were
+correct all along — mbcomp moved from −6.7 dB to +0.9 dB purely by fixing the
+reference.
 
 Regenerate: render goldens per fixtures/README.md, then
 `cargo test -p sf-render --test fixtures` (report at target/parity-report.json).
@@ -26,12 +32,12 @@ Regenerate: render goldens per fixtures/README.md, then
 | fx-crush | 0.839 | +1.3 |  |
 | fx-delay | 0.983 | +1.4 |  |
 | fx-dist | 0.973 | +0.2 |  |
-| fx-duck | 0.977 | -4.3 | GOLDEN PATHOLOGY: tempo-mode duck is inert in the browser offline render (Tone.Offline context-restore bug); Rust duck is live-correct |
+| fx-duck | 0.981 | +2.2 | golden regenerated 2026-08-21 after fixing the inert-duck bug (was -4.3 dB against an unducked golden) |
 | fx-eq | 0.978 | +1.4 |  |
 | fx-eq7 | 0.984 | +1.4 |  |
 | fx-filter | 0.986 | +1.4 |  |
-| fx-mbcomp | 0.976 | -6.7 | GOLDEN PATHOLOGY: browser offline render degrades the worklet to passthrough (evidence in fx/mbcomp.rs header); Rust port verified against a float64 simulation of the canonical worklet |
-| fx-opto | 0.938 | +0.7 | device-level parity +0.7 dB after Blink-kernel port + limiter alignment |
+| fx-mbcomp | 0.978 | +0.9 | golden regenerated 2026-08-21 after fixing the browser offline-render bug (was -6.7 dB against a passthrough golden) |
+| fx-opto | 0.938 | +0.7 | Blink-kernel port + Tone.Limiter-matched master limiter |
 | fx-phaser | 0.982 | +1.4 |  |
 | fx-pingpong | 0.985 | +2.9 |  |
 | fx-plate | 0.983 | +0.9 |  |
@@ -52,4 +58,4 @@ Regenerate: render goldens per fixtures/README.md, then
 | midi-velo | 0.980 | +1.4 |  |
 | smoke-mono | 0.979 | +1.3 |  |
 
-All 37 fixtures: zero hard failures. 29/37 within ±2 dB loudness of the browser reference (exceptions annotated above).
+All 37 fixtures: zero hard failures. 31/37 within ±2 dB of the browser reference.

@@ -395,7 +395,10 @@ impl IoHandle {
     pub fn start_master_capture(&self) -> Result<(), String> {
         let r = self.rec();
         let out = r.out.as_ref().ok_or("engine stream not running")?;
-        out.master.arm(0);
+        // GATED producer: the callback only pushes master frames while
+        // capture_on — arm_gated re-syncs the delivery cursor so the frames
+        // that follow aren't all discarded as "before start" (empty take).
+        out.master.arm_gated(0);
         out.capture_on.store(true, Ordering::Release);
         Ok(())
     }
@@ -404,8 +407,12 @@ impl IoHandle {
     /// it IS the output).
     pub fn stop_master_capture(&self) -> Result<Recorded, String> {
         let out = self.rec().out.clone().ok_or("engine stream not running")?;
-        out.capture_on.store(false, Ordering::Release);
+        // disarm BEFORE closing the gate: `end` is the stream frame counter,
+        // which already includes frames this callback noted but has not pushed
+        // yet. Closing the gate first strands those, so the wait could only
+        // ever end by timing out (a 2 s hang on every stop).
         let (take, _) = out.master.disarm(Duration::from_secs(2)).ok_or("master capture not running")?;
+        out.capture_on.store(false, Ordering::Release);
         Ok(Recorded { sample_rate: take.sample_rate, channels: take.channels, compensation_frames: 0 })
     }
 

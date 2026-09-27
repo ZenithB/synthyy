@@ -27,6 +27,7 @@ import {
   collectDroppedAudio,
 } from '../audio/samples'
 import { ensureBasicSamples } from '../audio/basics'
+import { confirmDialog, promptDialog } from './dialogs'
 
 function Star({ id }: { id: string }) {
   useLib()
@@ -167,7 +168,7 @@ function SampleRow({ s, folders }: { s: SampleMeta; folders: string[] }) {
       fn: () => moveSample(s.id, f),
     })),
     'sep' as const,
-    { label: <><Icon name="close" size={11} /> Delete sample</>, fn: () => { if (confirm(`Delete "${s.name}" from the sample bank?`)) deleteSample(s.id) }, danger: true },
+    { label: <><Icon name="close" size={11} /> Delete sample</>, fn: async () => { if (await confirmDialog(`Delete "${s.name}" from the sample bank?`, { danger: true })) deleteSample(s.id) }, danger: true },
   ] as MenuItem[])
   if (renaming) {
     return (
@@ -226,14 +227,14 @@ function FolderRow({ node, depth, folders }: { node: FolderNode; depth: number; 
   const menu = (e: React.MouseEvent) => openMenu(e, [
     { label: <><Icon name="folder" size={11} /> Import files here…</>, fn: () => pickAudioFiles(node.path) },
     { label: <><Icon name="folder" size={11} /> Import folder here…</>, fn: () => pickAudioFolder(node.path) },
-    { label: <><Icon name="plus" size={11} /> New subfolder</>, fn: () => { const n = prompt('Folder name'); if (n?.trim()) createSampleFolder(`${node.path}/${n.trim()}`) } },
+    { label: <><Icon name="plus" size={11} /> New subfolder</>, fn: async () => { const n = await promptDialog('Folder name'); if (n?.trim()) createSampleFolder(`${node.path}/${n.trim()}`) } },
     'sep',
-    { label: <><Icon name="pencil" size={11} /> Rename folder</>, fn: () => {
-        const n = prompt('Rename folder', node.name)
+    { label: <><Icon name="pencil" size={11} /> Rename folder</>, fn: async () => {
+        const n = await promptDialog('Rename folder', node.name)
         if (n?.trim()) renameSampleFolder(node.path, node.path.split('/').slice(0, -1).concat(n.trim()).join('/'))
       } },
-    { label: <><Icon name="close" size={11} /> Delete folder</>, fn: () => {
-        if (confirm(`Delete "${node.path}" and the ${count} sample${count === 1 ? '' : 's'} inside it?`)) deleteSampleFolder(node.path)
+    { label: <><Icon name="close" size={11} /> Delete folder</>, fn: async () => {
+        if (await confirmDialog(`Delete "${node.path}" and the ${count} sample${count === 1 ? '' : 's'} inside it?`, { danger: true })) deleteSampleFolder(node.path)
       }, danger: true },
   ])
   const acceptDrop = (e: React.DragEvent) =>
@@ -291,7 +292,7 @@ function SamplesBrowser({ query }: { query: string }) {
       <div className="bsamples-tools">
         <button className="bbtn" onClick={() => pickAudioFiles('')} data-info="Import audio files into the sample bank"><Icon name="sampler" size={12} />Import files…</button>
         <button className="bbtn" onClick={() => pickAudioFolder('')} data-info="Import a whole folder (its structure is kept)"><Icon name="folder" size={12} />Import folder…</button>
-        <button className="bbtn" onClick={() => { const n = prompt('Folder name'); if (n?.trim()) createSampleFolder(n.trim()) }} data-info="Create an empty folder to organise into"><Icon name="plus" size={12} />New folder</button>
+        <button className="bbtn" onClick={async () => { const n = await promptDialog('Folder name'); if (n?.trim()) createSampleFolder(n.trim()) }} data-info="Create an empty folder to organise into"><Icon name="plus" size={12} />New folder</button>
       </div>
       {all.length === 0 && <div className="bcat" style={{ paddingBottom: 6 }}>Drop audio files or folders anywhere — they land here</div>}
       {query

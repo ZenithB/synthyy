@@ -25,6 +25,7 @@ import { TrackInput } from './TrackInput'
 import { peersList, subscribeAwareness, awarenessVersion } from '../state/net'
 import { MIDI_LOOPS, PROGRESSIONS, progressionClip, clipInKey } from '../packs'
 import { loadLoop } from './actions'
+import { promptDialog } from './dialogs'
 
 const LANE_H = 88
 const HEAD_W = 168
@@ -496,7 +497,7 @@ export function ArrangementView() {
     if (ts) {
       items.push(
         { label: <><Icon name="loop" size={12} /> Loop this range</>, fn: () => setLoopRegion(ts[0], ts[1], true) },
-        { label: <><Icon name="map" size={12} /> Create region from selection</>, fn: () => { const n = prompt('Region name', 'Region'); if (n != null) addMarker(ts[0], n.trim() || 'Region', ts[1] - ts[0]) } },
+        { label: <><Icon name="map" size={12} /> Create region from selection</>, fn: async () => { const n = await promptDialog('Region name', 'Region'); if (n != null) addMarker(ts[0], n.trim() || 'Region', ts[1] - ts[0]) } },
         { label: <><Icon name="close" size={12} /> Delete clips in range</>, fn: () => deleteRange(ts[0], ts[1]), danger: true },
         'sep',
         { label: 'Clear selection (Esc)', fn: () => setUI({ timeSel: null }) },
@@ -841,11 +842,11 @@ export function ArrangementView() {
               setDrag({ type: 'timesel', t0: t, t1: t, moved: false })
               capturePointer(e)
             }}
-            onDoubleClick={e => {
+            onDoubleClick={async e => {
               if ((e.target as HTMLElement).closest('.arr-marker')) return
               const rect = lanesRef.current!.getBoundingClientRect()
               const t = Math.max(0, snap((e.clientX - rect.left) / z / pxPerTick, e.shiftKey))
-              const name = prompt('Marker name', `Marker ${markersList().length + 1}`)
+              const name = await promptDialog('Marker name', `Marker ${markersList().length + 1}`)
               if (name != null) addMarker(t, name.trim() || 'Marker')
             }}
             onContextMenu={stripMenu}
@@ -879,7 +880,7 @@ export function ArrangementView() {
                 onContextMenu={e => {
                   e.preventDefault(); e.stopPropagation()
                   openMenu(e, [
-                    { label: <><Icon name="pencil" size={11} /> Rename</>, fn: () => { const n = prompt('Name', mk.name); if (n?.trim()) updateMarker(mk.id, { name: n.trim() }) } },
+                    { label: <><Icon name="pencil" size={11} /> Rename</>, fn: async () => { const n = await promptDialog('Name', mk.name); if (n?.trim()) updateMarker(mk.id, { name: n.trim() }) } },
                     ...(mk.len > 0 ? [{ label: <><Icon name="loop" size={11} /> Loop this region</>, fn: () => setLoopRegion(mk.t, mk.t + mk.len, true) }] : []),
                     { custom: <ColorRow colors={CLIP_COLORS} onPick={i => updateMarker(mk.id, { color: i })} /> },
                     'sep',

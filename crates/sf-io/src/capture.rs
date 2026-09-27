@@ -160,11 +160,35 @@ impl Tap {
     /// start frame. `other_frame` is any companion counter to snapshot at the
     /// same instant (the output stream's frame count for an input take).
     pub fn arm(&self, other_frame: u64) -> u64 {
+        self.arm_inner(other_frame, false)
+    }
+
+    /// Arm a tap whose producer is GATED — it pushes only while recording.
+    ///
+    /// `total` counts every frame the stream produced; `cursor` counts only
+    /// frames handed to the tap. An ungated producer keeps them in lockstep,
+    /// which is what [`arm`] assumes. The master tap pushes only while
+    /// recording, so `cursor` lags `total` by the ENTIRE idle period, and
+    /// `ingest` then discards every captured frame as "before start" — the
+    /// take comes back empty and Record Output silently produced nothing.
+    ///
+    /// Snapping the cursor to the stream clock in the same critical section
+    /// as the arm fixes that. Valid only while the producer is idle and the
+    /// ring drained (i.e. before the gate is opened), which is exactly when
+    /// this is called.
+    pub fn arm_gated(&self, other_frame: u64) -> u64 {
+        self.arm_inner(other_frame, true)
+    }
+
+    fn arm_inner(&self, other_frame: u64, resync_cursor: bool) -> u64 {
         let mut i = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         // read the counter UNDER the lock: the writer drains under the same
         // lock, so its cursor is ≤ total here → frames ≥ start are all still
         // in the ring (or not produced yet) — nothing to recover
         let start = self.total.load(Ordering::Acquire);
+        if resync_cursor {
+            i.cursor = start;
+        }
         i.armed = true;
         i.start = start;
         i.end = None;
@@ -359,6 +383,43 @@ pub fn find_delay(signal: &[f32], template: &[f32], min_corr: f32) -> Option<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REGRESSION: "Record Output" captured nothing.
+    ///
+    /// The engine output callback notes EVERY frame but only pushes while
+    /// recording, so by the time the user armed, `cursor` (frames delivered)
+    /// lagged `total` (frames produced) by the whole idle period. `arm()`
+    /// starts at `total`, so `ingest` discarded every captured frame as
+    /// "before start" and the take came back empty — silently.
+    #[test]
+    fn gated_producer_captures_audio_after_a_long_idle_period() {
+        let tap = Tap::new(2, 48_000);
+        // stream runs for 10 s WITHOUT recording: noted, never pushed
+        for _ in 0..(10 * 48_000 / 128) {
+            tap.note_callback(128, 0);
+        }
+        tap.arm_gated(0);
+        // now recording: the callback notes AND pushes each block
+        let block = [0.25f32; 128 * 2];
+        for _ in 0..8 {
+            tap.note_callback(128, 0);
+            tap.ingest(&block); // stands in for ring push + writer drain
+        }
+        let (take, _) = tap.disarm(Duration::from_millis(50)).expect("armed take");
+        assert_eq!(take.channels.len(), 2);
+        assert_eq!(take.channels[0].len(), 8 * 128, "every recorded frame is kept");
+        assert!(take.channels[0].iter().all(|&v| v == 0.25), "audio, not silence");
+    }
+
+    /// The ungated path (input stream: notes and pushes every frame) must be
+    /// unaffected by the gated variant's cursor re-sync.
+    #[test]
+    fn ungated_arm_still_starts_at_the_stream_frame() {
+        let tap = Tap::new(1, 48_000);
+        tap.note_callback(300, 0);
+        tap.ingest(&[0.0; 300]);
+        assert_eq!(tap.arm(0), 300);
+    }
 
     #[test]
     fn take_is_frame_exact_regardless_of_writer_timing() {

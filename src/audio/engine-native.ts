@@ -17,9 +17,9 @@
 //   • freezeTrack — toasts; freezing exists to save webaudio CPU and is not
 //     needed on the native engine. isFrozen/isFreezing are always false.
 //   • getSpectrum / getWaveform → empty arrays; getPitchHz → 0 (no master
-//     analyser taps over IPC yet); deviceAnalyser → null; deviceMeterDb →
-//     -100; deviceBandReduction → [] (MeterBank exposes one GR per fx, no
-//     per-band variant yet). deviceReductionDb IS live (per-fx GR meters).
+//     analyser taps over IPC yet); deviceAnalyser → null. Device meters
+//     (deviceMeterDb), per-fx GR (deviceReductionDb) and the multiband's
+//     per-band GR (deviceBandReduction) are all LIVE from the engine snapshot.
 //   • lfoValue → 0 (LFO/macro/automation modulation isn't ported yet — the
 //     Rust engine plays the doc's stored values).
 //   • perfStats.audioLoad.supported=false; the probe fields carry REAL
@@ -42,8 +42,12 @@ type NativeSnapshot = {
   mode: string
   playhead_ticks: number
   master: { peak: number; rms: number }
-  tracks: { id: string; peak: number; rms: number }[]
+  tracks: { id: string; peak: number; rms: number; inst: number }[]
   gr: number[]
+  /** per-fx output level (linear, decaying peak-hold), same order as `gr` */
+  fx_level: number[]
+  /** per-fx, per-band gain reduction in dB (≤ 0), same order as `gr` */
+  fx_bands: [number, number, number][]
   xruns: number
   callbacks: number
   over_budget: number
@@ -106,6 +110,8 @@ class NativeEngine implements EngineApi {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private pollInFlight = false
   private trackDb = new Map<string, number>()
+  /** instrument output level per track, dB — the device rack's inst meter */
+  private instDb = new Map<string, number>()
 
   // ---- id maps from the last project_load ----
   private trackIds: string[] = []
@@ -146,7 +152,9 @@ class NativeEngine implements EngineApi {
     if (!this.startPromise) {
       this.startPromise = this.doStart().catch(e => {
         console.error('native audio init failed', e)
-        setUI({ audioError: 'The native audio engine couldn’t start. Check the output device in Audio settings, then retry.' })
+        // Surface the REAL reason — a generic banner sent us hunting blind.
+        const why = String((e as Error)?.message ?? e).slice(0, 200)
+        setUI({ audioError: `The native audio engine couldn’t start: ${why}` })
         this.startPromise = null
       })
     }
@@ -168,6 +176,26 @@ class NativeEngine implements EngineApi {
     this.startPolling()
     this.started = true
     setUI({ audioReady: true, audioError: null })
+    this.emit()
+  }
+
+  /** Re-open the engine's output stream and re-push the project.
+   *
+   *  sf-io hosts ONE stream: `audio_start_tone` (the Audio-settings test tone)
+   *  REPLACES the engine stream, and `audio_stop` drops it entirely. Without
+   *  this, playing the test tone — or just opening and closing Audio settings —
+   *  left the app permanently silent, because ensureStarted() is memoized and
+   *  never re-runs. Called by the settings panel when it releases the device.
+   */
+  async restartStream() {
+    if (!this.started) return
+    const info = await invoke<{ device: string; sample_rate: number; buffer_frames: number | null }>(
+      'engine_start',
+      { device: null, bufferFrames: bufferForPrefs() },
+    )
+    this.sampleRate = info.sample_rate
+    this.bufferFrames = info.buffer_frames ?? bufferForPrefs()
+    await this.pushProject()
     this.emit()
   }
 
@@ -250,10 +278,41 @@ class NativeEngine implements EngineApi {
 
   /** Full-doc re-push. A graph swap resets the Rust schedulers, so when the
    *  transport is running we re-launch the mirrored session clips (anchored
-   *  at 0 while stopped) and resume at the current position. */
+   *  at 0 while stopped) and resume at the current position.
+   *
+   *  Two things this MUST get right, both of which caused "playback stops
+   *  after editing a device; mute/unmute brings it back":
+   *   • A launch that hasn't reached its quantize boundary lives ONLY in the
+   *     Rust scheduler (mirrored here as `pending`). The swap wipes it, so it
+   *     has to be re-launched too — otherwise resolvePending later promotes it
+   *     into `parts` and the UI shows a clip playing that the engine dropped.
+   *   • Re-pushes must not overlap: every step here is a separate await, so
+   *     two in flight can interleave stop/launch/play and end up stopped. */
+  private repushing = false
+  private repushAgain = false
   private async repushNow() {
+    if (this.repushing) { this.repushAgain = true; return }
+    this.repushing = true
+    try {
+      do {
+        this.repushAgain = false
+        await this.repushOnce()
+      } while (this.repushAgain)
+    } finally {
+      this.repushing = false
+    }
+  }
+
+  private async repushOnce() {
     const wasPlaying = this.playFlag
     const pos = this.positionTicks()
+    // snapshot before any await: the poll mutates both maps
+    const relaunch = new Map<string, string>() // trackId → sceneId
+    for (const [tid, p] of this.parts) relaunch.set(tid, p.key.split('|')[1])
+    for (const [tid, p] of this.pending) {
+      if (p.action === 'launch' && p.key) relaunch.set(tid, p.key.split('|')[1])
+    }
+    const restop = [...this.pending].filter(([, p]) => p.action === 'stop').map(([tid]) => tid)
     try {
       await this.pushProject()
       if (!wasPlaying) return
@@ -261,10 +320,12 @@ class NativeEngine implements EngineApi {
         await invoke('transport_play', { mode: 'arr', fromTicks: pos })
       } else {
         await invoke('transport_stop')
-        for (const [tid, p] of this.parts) {
-          await invoke('clip_launch', { trackId: tid, sceneId: p.key.split('|')[1] })
+        for (const [tid, sceneId] of relaunch) {
+          await invoke('clip_launch', { trackId: tid, sceneId })
         }
         await invoke('transport_play', { mode: 'session', fromTicks: pos })
+        // a stop queued for the next boundary was dropped with the old graph
+        for (const tid of restop) invoke('clip_stop', { trackId: tid }).catch(() => {})
       }
     } catch (e) {
       console.error('project re-push failed', e)
@@ -386,7 +447,11 @@ class NativeEngine implements EngineApi {
       this.snapAt = performance.now()
       this.playFlag = s.playing
       this.trackDb.clear()
-      for (const t of s.tracks) this.trackDb.set(t.id, linToDb(t.peak))
+      this.instDb.clear()
+      for (const t of s.tracks) {
+        this.trackDb.set(t.id, linToDb(t.peak))
+        this.instDb.set(t.id, linToDb(t.inst))
+      }
       // rolling worst "keeping up" factor for the perf monitor
       const rtf = s.peak_load > 1 ? 1 / s.peak_load : 1
       this.minRtf = Math.min(this.minRtf, rtf)
@@ -615,8 +680,13 @@ class NativeEngine implements EngineApi {
     return this.snap ? linToDb(this.snap.master.peak) : -100
   }
 
-  deviceMeterDb(_trackId: string, _deviceId: string): number {
-    return -100
+  /** Per-device output level in dB — 'inst' or an fx id (trackId 'master'
+   *  for the master chain). The engine already applies meter ballistics. */
+  deviceMeterDb(trackId: string, deviceId: string): number {
+    if (deviceId === 'inst') return this.instDb.get(trackId) ?? -100
+    const i = this.grIndex.get(`${trackId}|${deviceId}`)
+    const lin = i === undefined ? undefined : this.snap?.fx_level?.[i]
+    return lin === undefined ? -100 : linToDb(lin)
   }
 
   deviceReductionDb(trackId: string, fxId: string): number {
@@ -625,8 +695,10 @@ class NativeEngine implements EngineApi {
     return this.snap?.gr[i] ?? 0
   }
 
-  deviceBandReduction(_trackId: string, _fxId: string): number[] {
-    return []
+  /** Per-band gain reduction in dB (≤ 0) — only the multiband reports it. */
+  deviceBandReduction(trackId: string, fxId: string): number[] {
+    const i = this.grIndex.get(`${trackId}|${fxId}`)
+    return (i === undefined ? undefined : this.snap?.fx_bands?.[i]) ?? []
   }
 
   deviceAnalyser(_trackId: string, _fxId: string): AnalyserNode | null {

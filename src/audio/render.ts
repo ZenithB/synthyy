@@ -133,9 +133,14 @@ function makeOffDevice(type: string, params: Record<string, number>): OffDevice 
 }
 
 // Which worklet modules a set of fx uses → register them on the CURRENT
-// (offline) context, each capped by a timeout so a stalling addModule can
-// never deadlock the render (Tone.Offline awaits the build callback first).
+// (offline) context. Registered through Tone's context so the promise is also
+// what OfflineContext.render() awaits (workletsAreReady), and still capped by a
+// timeout because addModule() can stall until startRendering() in some browsers
+// and Tone.Offline awaits this build callback *before* it renders. A module
+// that misses the window is reported loudly — it used to degrade SILENTLY
+// (mbcomp → passthrough), which is how exports shipped without the effect.
 const SF_FX_TYPES = ['autotune']   // chorus/phaser reverted to Tone composites
+const WORKLET_TIMEOUT_MS = 8000
 async function registerOfflineWorklets(project: ProjectJSON, onlyTrack?: TrackJSON) {
   const fxLists: FxJSON[][] = onlyTrack
     ? [onlyTrack.fx ?? []]
@@ -144,12 +149,19 @@ async function registerOfflineWorklets(project: ProjectJSON, onlyTrack?: TrackJS
   const needMb = all.some(f => f.type === 'mbcomp')
   const needFx = all.some(f => SF_FX_TYPES.includes(f.type))
   if (!needMb && !needFx) return
-  const raw = Tone.getContext().rawContext as any
-  if (!raw?.audioWorklet) return
-  const load = (url: string) => Promise.race([
-    raw.audioWorklet.addModule(url).catch(() => {}),
-    new Promise<void>(res => setTimeout(res, 1500)),
-  ])
+  const ctx = Tone.getContext()
+  if (!(ctx.rawContext as any)?.audioWorklet) return
+  const load = async (url: string) => {
+    const timedOut = Symbol('timeout')
+    const r = await Promise.race([
+      ctx.addAudioWorkletModule(url).catch((e: unknown) => { console.warn(`worklet ${url} failed to register:`, e); return timedOut }),
+      new Promise(res => setTimeout(() => res(timedOut), WORKLET_TIMEOUT_MS)),
+    ])
+    if (r === timedOut) {
+      console.warn(`worklet ${url} did not register within ${WORKLET_TIMEOUT_MS}ms — that device renders as a passthrough in this bounce`)
+      toast('An effect could not load for the export — see console')
+    }
+  }
   if (needMb) await load('/sf-mbdyn.js')
   if (needFx) await load('/sf-fx.js')
 }
@@ -292,7 +304,7 @@ function resolveTarget(ot: OffTrack, dest: string, fxId: string, pkey: string) {
 
 /** Per-frame modulation (sidechain tick + LFOs + scene automation), mirrors the live loop. */
 function applyMod(ot: OffTrack, posTicks: number, audioTime: number, bpm: number, withAutomation: boolean) {
-  ot.fx.forEach(f => f.dev.tick?.(posTicks, true, bpm))
+  ot.fx.forEach(f => f.dev.tick?.(posTicks, true, bpm, audioTime))   // offline time, NOT Tone.now()
 
   const controlled = new Map<string, { dest: string; fxId: string; pkey: string }>()
   const autoNorm = new Map<string, number>()
@@ -638,7 +650,7 @@ async function renderBuffer(
     transport.scheduleRepeat(time => {
       const posTicks = transport.getTicksAtTime(time)
       for (const ot of offTracks) applyMod(ot, posTicks, time, bpm, withAutomation)
-      masterOffFx.forEach(d => d.tick?.(posTicks, true, bpm))
+      masterOffFx.forEach(d => d.tick?.(posTicks, true, bpm, time))   // offline time, NOT Tone.now()
     }, '32n', 0)
 
     transport.start(0.02, `${fromTicks}i`)

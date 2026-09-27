@@ -28,6 +28,7 @@ import { engine } from '../audio/engine'
 import { saveUserPreset } from '../userlib'
 import { importSampleFile, startSampleRecording, stopSampleRecording, isRecordingSample } from '../audio/samples'
 import { Icon } from './icons'
+import { promptDialog } from './dialogs'
 
 const MACRO_SPEC: ParamSpec = { key: 'm', label: '', min: 0, max: 1, def: 0, fmt: fmtPct }
 const OUT_SPEC: ParamSpec = { key: 'out', label: 'Out', min: -30, max: 30, def: 0, fmt: fmtDb }
@@ -245,8 +246,8 @@ function InstrumentPanel({ trackId, track }: { trackId: string; track: Y.Map<any
         {kind === 'audio' && <span className="device-audio-hint">audio clips · stereo · fx + sends apply</span>}
         {kind === 'synth' && type !== 'sampler' && type !== 'ksampler' && (
           <button className="icon-btn" data-info="Save these settings as your own preset"
-            onClick={() => {
-              const name = prompt('Save preset as…', `My ${schema.label}`)
+            onClick={async () => {
+              const name = await promptDialog('Save preset as…', `My ${schema.label}`)
               if (name) { saveUserPreset({ name, type, params: Object.fromEntries(params.entries()) }); toast(`Saved “${name}” to My Sounds`) }
             }}><Icon name="star" size={13} /></button>
         )}

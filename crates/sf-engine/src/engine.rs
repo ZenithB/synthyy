@@ -650,6 +650,132 @@ mod tests {
         assert_eq!(snap.tracks.len(), 1);
     }
 
+    /// Project with `fx` on the synth track, every param defaulted from the
+    /// frozen registry (device constructors expect full param maps).
+    fn project_with_fx(fx_type: &str, overrides: &[(&str, f64)]) -> ProjectJSON {
+        let mut p = sf_project_defaults(&minimal_project());
+        let mut params: sf_project::project::Params = BTreeMap::new();
+        for spec in sf_project::registry::fx_params(fx_type) {
+            params.insert(spec.key.to_string(), spec.def as f64);
+        }
+        for (k, v) in overrides {
+            params.insert((*k).to_string(), *v);
+        }
+        p.tracks[0].fx = vec![sf_project::project::FxJSON {
+            id: Some("f1".into()),
+            r#type: fx_type.into(),
+            on: true,
+            params,
+            out: None,
+            src_track: None,
+            src_pitch: None,
+        }];
+        p
+    }
+
+    fn play(p: &ProjectJSON, secs: f32) -> (Engine, EngineSnapshot) {
+        let mut e = Engine::new(44_100.0);
+        e.load_project(p);
+        e.push_cmd(Cmd::ClipLaunch { track: 0, clip: 0 });
+        e.push_cmd(Cmd::TransportPlay { mode: Mode::Session, from_ticks: 0.0 });
+        render_secs(&mut e, secs);
+        let snap = e.snapshot();
+        (e, snap)
+    }
+
+    /// REGRESSION: the device rack's per-device meters were dead on desktop —
+    /// the engine never measured instrument or effect output levels.
+    #[test]
+    fn device_meters_report_instrument_and_fx_output() {
+        let (_, snap) = play(&project_with_fx("delay", &[]), 0.6);
+        assert_eq!(snap.inst_level.len(), 1, "one instrument level per track");
+        assert_eq!(snap.fx_level.len(), 1, "one output level per built fx");
+        assert!(snap.inst_level[0] > 1e-3, "instrument meter silent: {}", snap.inst_level[0]);
+        assert!(snap.fx_level[0] > 1e-3, "fx meter silent: {}", snap.fx_level[0]);
+        assert!(snap.inst_level.iter().chain(&snap.fx_level).all(|v| v.is_finite()));
+    }
+
+    /// REGRESSION: the multiband card's per-band gain-reduction bars never
+    /// moved on desktop — the engine never read `gr_bands()`.
+    #[test]
+    fn multiband_reports_per_band_gain_reduction() {
+        // crush the low band hard; C3/G3 bass notes sit squarely in it
+        let (_, snap) = play(
+            &project_with_fx("mbcomp", &[("b0_thresh", -50.0), ("b0_ratio", 20.0)]),
+            1.0,
+        );
+        let bands = snap.fx_bands_db[0];
+        assert!(bands[0] < -1.0, "low band shows no gain reduction: {bands:?}");
+        assert!(bands.iter().all(|v| *v <= 0.0 && v.is_finite()), "GR is dB ≤ 0: {bands:?}");
+    }
+
+    /// Meters must FALL when the music stops — a peak-hold that never releases
+    /// would look alive while silent.
+    #[test]
+    fn device_meter_releases_after_silence() {
+        let (mut e, snap) = play(&project_with_fx("delay", &[("mix", 0.0)]), 0.6);
+        let loud = snap.inst_level[0];
+        e.push_cmd(Cmd::TransportStop);
+        render_secs(&mut e, 3.0);
+        let quiet = e.snapshot().inst_level[0];
+        assert!(loud > 1e-3, "precondition: meter was lit ({loud})");
+        assert!(quiet < loud * 0.05, "meter held after silence: {loud} → {quiet}");
+    }
+
+    /// Feedback Chunk: Loop 1 ⇄ Loop 2 with a return off each. The cycle used
+    /// to be CUT (a delay-less Web-Audio cycle renders silent), so the loop
+    /// never regenerated. It must now still be ringing long after the source
+    /// track has gone quiet, and reach master through the returns.
+    #[test]
+    fn feedback_chunk_loop_regenerates_into_master() {
+        fn bus(id: &str, name: &str, output: &str, sends: Option<&[(&str, f64)]>) -> TrackJSON {
+            let mut t = minimal_project().tracks[0].clone();
+            t.id = Some(id.into());
+            t.name = name.into();
+            t.kind = TrackKind::Bus;
+            t.inst = InstJSON {
+                r#type: "audiobus".into(),
+                params: BTreeMap::new(),
+                sample_id: None,
+                sample_name: None,
+                out: None,
+                pad_samples: None,
+                pad_names: None,
+            };
+            t.fx = vec![];
+            t.output = Some(output.into());
+            t.sends = sends.map(|ss| ss.iter().map(|(k, v)| ((*k).to_string(), *v)).collect());
+            t
+        }
+        let mut p = sf_project_defaults(&minimal_project());
+        // source track feeds Loop 1 at full level
+        p.tracks[0].sends = Some([("loop1".to_string(), 1.0)].into_iter().collect());
+        // doc order puts Loop 1 first, so only Loop 2 → Loop 1 closes the cycle
+        p.tracks.push(bus("loop1", "Loop 1", "loop2", Some(&[("ret1", 1.0)])));
+        p.tracks.push(bus("loop2", "Loop 2", "loop1", Some(&[("ret2", 1.0)])));
+        p.tracks.push(bus("ret1", "Return 1", "master", None));
+        p.tracks.push(bus("ret2", "Return 2", "master", None));
+
+        let mut e = Engine::new(44_100.0);
+        e.load_project(&p);
+        e.push_cmd(Cmd::ClipLaunch { track: 0, clip: 0 });
+        e.push_cmd(Cmd::TransportPlay { mode: Mode::Session, from_ticks: 0.0 });
+        render_secs(&mut e, 1.0); // the clip's two notes play inside this
+        e.push_cmd(Cmd::TransportStop);
+        render_secs(&mut e, 1.0); // let the source fall silent
+        let (tail_l, tail_r) = render_secs(&mut e, 1.0); // pure loop regeneration
+
+        assert!(tail_l.iter().chain(&tail_r).all(|s| s.is_finite()));
+        let tail = rms(&tail_l);
+        assert!(
+            tail > 1e-4,
+            "loop died — the cycle is not regenerating (tail rms {tail})"
+        );
+        let snap = e.snapshot();
+        assert!(!snap.playing, "transport stopped; only the loop should sound");
+        assert!(snap.master.peak > 0.0, "returns never reached master");
+    }
+
     #[test]
     fn deterministic_across_runs() {
         let run = || {

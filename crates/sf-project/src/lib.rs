@@ -3,6 +3,7 @@
 //! tick units must match `src/state/doc.ts`'s ProjectJSON exactly — a browser
 //! project must open here byte-compatibly and vice versa. Lands in Phase 1.
 
+pub mod loose;
 pub mod project;
 pub mod registry;
 

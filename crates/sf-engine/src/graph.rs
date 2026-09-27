@@ -54,9 +54,56 @@ pub(crate) struct FxSlot {
 pub(crate) enum BusOut {
     Master,
     Bus(usize),
-    /// Back edge of a bus cycle — dropped (a delay-less Web-Audio cycle
-    /// renders silent; only the Feedback bus's delayed self-send survives).
-    Cut,
+    /// Back edge routed through a short delay line (index into
+    /// `EngineGraph::back_edges`) so the cycle REGENERATES instead of being
+    /// dropped. This is what makes a Feedback Chunk (two buses whose outputs
+    /// feed each other) loop, and mirrors how the built-in Feedback bus makes
+    /// its self-send a legal, audible cycle.
+    Delayed(usize),
+}
+
+/// A bus→bus edge that closes a cycle. The target renders BEFORE the source,
+/// so the source writes into the delay each block and the target reads what
+/// was written `delay_samples` ago — one fixed delay per lap, independent of
+/// the audio buffer size.
+pub(crate) struct BackEdge {
+    pub target: usize,
+    dl: DelayLine,
+    dr: DelayLine,
+    delay_samples: usize,
+}
+
+impl BackEdge {
+    fn new(target: usize, sample_rate: f32) -> Self {
+        let delay_samples = (sample_rate * FB_DELAY_SEC).max(64.0) as usize;
+        Self {
+            target,
+            dl: DelayLine::new(delay_samples + 2),
+            dr: DelayLine::new(delay_samples + 2),
+            delay_samples,
+        }
+    }
+
+    /// Target side: add what the source wrote a lap ago into `l`/`r`.
+    /// Mirrors the Feedback idiom — the write pointer is still where the
+    /// previous block left it, so the read walks forward with `k`.
+    #[inline]
+    fn read_into(&self, l: &mut [f32], r: &mut [f32]) {
+        let d = self.delay_samples;
+        for k in 0..l.len() {
+            l[k] += self.dl.read((d - k).max(1));
+            r[k] += self.dr.read((d - k).max(1));
+        }
+    }
+
+    /// Source side: push this block's post-fader output into the delay.
+    #[inline]
+    fn write(&mut self, l: &[f32], r: &[f32]) {
+        for k in 0..l.len() {
+            self.dl.write(l[k]);
+            self.dr.write(r[k]);
+        }
+    }
 }
 
 pub(crate) struct Feedback {
@@ -477,6 +524,8 @@ pub struct DuckRoute {
 
 pub struct EngineGraph {
     pub(crate) tracks: Vec<TrackNode>,
+    /// Delay lines closing bus cycles (see [`BusOut::Delayed`]).
+    back_edges: Vec<BackEdge>,
     /// Render order: non-bus tracks in doc order, then buses topologically.
     order: Vec<usize>,
     send_a_bus: Option<usize>,
@@ -696,6 +745,8 @@ pub fn build_graph_full(
         }
     }
     let bus_pos = |i: usize| bus_order.iter().position(|&b| b == i);
+    // delay lines closing bus cycles, filled as back edges are discovered
+    let mut back_edges: Vec<BackEdge> = Vec::new();
 
     let send_a_bus = project
         .tracks
@@ -829,7 +880,11 @@ pub fn build_graph_full(
                         if pv > pu {
                             BusOut::Bus(v)
                         } else {
-                            BusOut::Cut
+                            // closes a cycle: route it through a delay so the
+                            // loop regenerates (Feedback Chunk) instead of
+                            // being dropped
+                            back_edges.push(BackEdge::new(v, sample_rate));
+                            BusOut::Delayed(back_edges.len() - 1)
                         }
                     }
                 },
@@ -1056,6 +1111,7 @@ pub fn build_graph_full(
         None
     };
     let graph = EngineGraph {
+        back_edges,
         tracks,
         order,
         send_a_bus,
@@ -1196,6 +1252,8 @@ impl EngineGraph {
         }
 
         let bpm = self.bpm;
+        // device-meter release, shared by every meter in this block
+        let meter_decay = crate::meters::meter_decay(n, self.sample_rate);
         for oi in 0..self.order.len() {
             let i = self.order[oi];
             // process into tmp (disjoint field borrows: tracks[i] + tmp)
@@ -1211,6 +1269,12 @@ impl EngineGraph {
                 if is_bus {
                     self.tmp_l[..n].copy_from_slice(&tr.buf_l[..n]);
                     self.tmp_r[..n].copy_from_slice(&tr.buf_r[..n]);
+                    // returning signal from a bus cycle (Feedback Chunk)
+                    for e in &self.back_edges {
+                        if e.target == i {
+                            e.read_into(&mut self.tmp_l[..n], &mut self.tmp_r[..n]);
+                        }
+                    }
                     // Feedback loop: delayed own output re-enters the input
                     if let Some(fb) = &mut tr.fb {
                         let d = fb.delay_samples;
@@ -1241,6 +1305,13 @@ impl EngineGraph {
                         self.tmp_r[k] *= og;
                     }
                 }
+                // instrument meter: after the instrument's out knob (buses have
+                // no instrument, but their input level is still worth showing)
+                self.meters.set_inst_level(
+                    i,
+                    crate::meters::block_peak(&self.tmp_l[..n], &self.tmp_r[..n]),
+                    meter_decay,
+                );
                 for slot in &mut tr.fx {
                     slot.dev.tick(pos_ticks, playing, bpm);
                     slot.dev.process(&mut self.tmp_l[..n], &mut self.tmp_r[..n]);
@@ -1252,6 +1323,12 @@ impl EngineGraph {
                         }
                     }
                     self.meters.set_gr(slot.gr_idx, slot.dev.gr_db());
+                    self.meters.set_fx_bands(slot.gr_idx, slot.dev.gr_bands());
+                    self.meters.set_fx_level(
+                        slot.gr_idx,
+                        crate::meters::block_peak(&self.tmp_l[..n], &self.tmp_r[..n]),
+                        meter_decay,
+                    );
                 }
                 // pan → fader → mute, per-sample smoothing
                 let mut peak = 0.0f32;
@@ -1282,7 +1359,12 @@ impl EngineGraph {
             // distribute tmp (post-fader) — tmp immutable, targets mutable
             let route_master = match bus_out {
                 BusOut::Master => true,
-                BusOut::Cut => false,
+                BusOut::Delayed(e) => {
+                    // cycle back edge: hand this block to the delay; the
+                    // target bus picks it up a lap later
+                    self.back_edges[e].write(&self.tmp_l[..n], &self.tmp_r[..n]);
+                    false
+                }
                 BusOut::Bus(j) => {
                     let dst = &mut self.tracks[j];
                     for k in 0..n {
@@ -1382,6 +1464,12 @@ impl EngineGraph {
                 }
             }
             self.meters.set_gr(slot.gr_idx, slot.dev.gr_db());
+            self.meters.set_fx_bands(slot.gr_idx, slot.dev.gr_bands());
+            self.meters.set_fx_level(
+                slot.gr_idx,
+                crate::meters::block_peak(&self.mix_l[..n], &self.mix_r[..n]),
+                meter_decay,
+            );
         }
         self.limiter.process(&mut self.mix_l[..n], &mut self.mix_r[..n]);
 

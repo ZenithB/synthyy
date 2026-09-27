@@ -94,6 +94,9 @@ struct TrackMeterDto {
     id: String,
     peak: f32,
     rms: f32,
+    /// Instrument output level (linear, decaying peak-hold) — the device
+    /// rack's instrument meter.
+    inst: f32,
 }
 
 #[derive(Serialize)]
@@ -111,6 +114,10 @@ struct SnapshotDto {
     tracks: Vec<TrackMeterDto>,
     /// Per-fx gain reduction in dB (≤ 0), ordered like ProjectLoadDto.gr.
     gr: Vec<f32>,
+    /// Per-fx output level (linear, decaying peak-hold), same order as `gr`.
+    fx_level: Vec<f32>,
+    /// Per-fx, per-band gain reduction in dB (≤ 0), same order as `gr`.
+    fx_bands: Vec<[f32; 3]>,
     xruns: u32,
     callbacks: u64,
     over_budget: u64,
@@ -485,9 +492,17 @@ fn engine_snapshot(
             .track_ids
             .iter()
             .zip(snap.tracks.iter())
-            .map(|(id, m)| TrackMeterDto { id: id.clone(), peak: m.peak, rms: m.rms })
+            .enumerate()
+            .map(|(i, (id, m))| TrackMeterDto {
+                id: id.clone(),
+                peak: m.peak,
+                rms: m.rms,
+                inst: snap.inst_level.get(i).copied().unwrap_or(0.0),
+            })
             .collect(),
         gr: snap.fx_gr_db,
+        fx_level: snap.fx_level,
+        fx_bands: snap.fx_bands_db,
         xruns: stats.xruns,
         callbacks: stats.callbacks,
         over_budget: stats.over_budget,

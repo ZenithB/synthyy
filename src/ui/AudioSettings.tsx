@@ -7,6 +7,8 @@ import React, { useEffect, useState } from 'react'
 import { getAudioPrefs, setAudioPrefs, AudioPrefs, LatencyMode } from '../audio/prefs'
 import { engine } from '../audio/engine'
 import { isDesktop, nativeAudio, nativeRecord, NativeDevice, NativeStats, NativeStreamInfo, NativeLatency } from '../audio/native'
+// desktop-only panel: talks to the concrete native engine (stream ownership)
+import { nativeEngine } from '../audio/engine-native'
 import { setUI, useUI } from '../state/store'
 import { Icon } from './icons'
 
@@ -121,14 +123,20 @@ function NativeAudioSection() {
     return () => clearInterval(t)
   }, [stream])
   // leaving the dialog unmounts the section — stop any running tone
-  useEffect(() => () => { nativeAudio.stop().catch(() => {}) }, [])
+  // Releasing the device must hand the stream BACK to the engine — the test
+  // tone replaced it, so skipping this leaves the app silent until restart.
+  useEffect(() => () => { void releaseDevice() }, [])
 
   const start = async () => {
     setErr('')
     try { setStream(await nativeAudio.startTone(device, buffer)) }
     catch (e) { setErr(String(e).slice(0, 120)); setStream(null) }
   }
-  const stop = () => { nativeAudio.stop().catch(() => {}); setStream(null); setStats(null) }
+  const releaseDevice = async () => {
+    try { await nativeAudio.stop() } catch { /* ok */ }
+    try { await nativeEngine.restartStream() } catch { /* engine not started yet */ }
+  }
+  const stop = () => { void releaseDevice(); setStream(null); setStats(null) }
 
   return (
     <>

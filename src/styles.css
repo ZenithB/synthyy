@@ -462,9 +462,13 @@ button { cursor: pointer; background: none; border: none; }
 .midi-btn { border: 1px solid var(--border); cursor: pointer; font-family: inherit; }
 .midi-btn:hover { color: var(--accent); border-color: var(--accent); }
 
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 100; display: flex; align-items: center; justify-content: center; }
-.modal { background: var(--bg1); border: 1px solid var(--border); border-radius: 11px; box-shadow: var(--shadow); max-height: 84vh; display: flex; flex-direction: column; }
-.modal-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); font-weight: 700; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+/* A dialog never runs past the viewport: it caps its height and SCROLLS.
+   `.modal-body` dialogs scroll their body (head stays put); dialogs that lay
+   their content out directly (.export-dialog, .perf-dialog) scroll as a whole,
+   so their head is sticky to keep the title and close button reachable. */
+.modal { background: var(--bg1); border: 1px solid var(--border); border-radius: 11px; box-shadow: var(--shadow); max-height: 100%; max-width: 100%; box-sizing: border-box; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); font-weight: 700; position: sticky; top: 0; background: var(--bg1); z-index: 1; flex-shrink: 0; }
 .modal-body { padding: 14px; overflow-y: auto; }
 .modal-body p { margin: 6px 0; color: var(--text); }
 .modal-body hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
@@ -472,6 +476,7 @@ button { cursor: pointer; background: none; border: none; }
 
 /* ---------------- export dialog ---------------- */
 .export-dialog { width: 460px; max-width: 94vw; padding: 14px; gap: 12px; }
+.export-dialog > .modal-head { position: sticky; top: -14px; margin: -14px -14px 0; padding: 12px 14px; background: var(--bg1); }
 .export-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 11px; }
 .export-label { width: 64px; color: var(--muted); font-size: 12px; }
 .export-unit { color: var(--muted); font-size: 11px; }
@@ -821,3 +826,15 @@ body.drag-audio::after {
 .track-input .track-rec.on { color: #fff; background: var(--danger); border-color: var(--danger); animation: pulse 1.2s infinite; }
 .arr-head .track-input { padding: 3px 0 0; }
 .arr-head .track-input .input-select { max-width: 96px; }
+
+/* in-app confirm/prompt (dialogs.tsx) — the desktop webview has no native
+   confirm()/prompt(), so these replace them in both targets */
+.dialog-body { display: flex; flex-direction: column; gap: 14px; padding: 4px 2px 2px; }
+.dialog-msg { margin: 0; font-size: 13px; line-height: 1.5; color: var(--txt, #ddd); }
+.dialog-input {
+  width: 100%; box-sizing: border-box; padding: 7px 9px; font: inherit; font-size: 13px;
+  color: inherit; background: rgba(0, 0, 0, .25); border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 5px; outline: none;
+}
+.dialog-input:focus { border-color: var(--accent, #8a9a5b); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
