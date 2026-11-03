@@ -8,8 +8,12 @@ import { DEFAULT_PROJECT } from './packs'
 import { initKeyboardPiano, initWebMidi } from './audio/input'
 import { engine } from './audio/engine'
 import { ui } from './state/store'
+import { isDesktop } from './audio/native'
+import { installDesktopGuards } from './ui/desktopGuards'
 
 async function boot() {
+  // desktop: keep WebView2/WKWebView browser keys and menus out of the app
+  if (isDesktop()) installDesktopGuards()
   await idb.whenSynced
 
   // Dev-only golden-fixture harness (#fixtures): renders fixture projects to

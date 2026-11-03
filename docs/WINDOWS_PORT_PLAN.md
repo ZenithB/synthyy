@@ -1,7 +1,7 @@
 # Synthyy for Windows — Port Plan
 
-Status (2026-11-03): **W0 and W1 implemented, plus the core of W3 (ASIO)
-and the MMCSS part of W2** — compiled and unit-tested for Windows and macOS
+Status (2026-11-03): **W0, W1, W2 and W4 implemented, plus the core of W3
+(ASIO)** — compiled and unit-tested for Windows and macOS
 targets, awaiting the real-hardware checks in `docs/WINDOWS.md` §3. See
 section 9 for what changed and what is still open.
 
@@ -347,11 +347,63 @@ WASAPI build because WASAPI covers every device; ASIO only improves latency.
   packed: a loud click on every 0 dBFS peak through a 24-bit ASIO driver.
   Output is now clipped one 24-bit step below 1.0 (unit-tested).
 
+### Done (W2 — real-time tuning)
+
+- MMCSS "Pro Audio" on WASAPI callback threads (landed with W1).
+- `sf_io::prefer_performance()`: the process opts out of Windows power
+  throttling (EcoQoS / "Efficiency mode"); called at app start and by the
+  soak/play-project probes.
+- `sf-render` `prepare_engine()` + `examples/bench.rs`: single-core CPU
+  benchmark (all fixtures ×realtime; K-copies headroom test at a real
+  block size), so the multi-core decision is made from numbers on the
+  target PC (`docs/WINDOWS.md` §3.7). The soak probe prints a `TABLE |` line
+  for the per-device table.
+- **LTO measured, not adopted.** `lto = "fat"` + `codegen-units = 1` gave no
+  speed-up on the fixture benchmark (6 interleaved rounds: 2.52 s without vs
+  2.62 s with — within noise) and slows release builds, so it stays off.
+- Multi-core rendering: deferred to the benchmark on the Windows PC (a
+  cloud core fits 4× the demo song in 70 % of a 128-frame deadline).
+
+### Done (W4 — Windows webview pass)
+
+Verified in Chromium (the engine WebView2 is built on) at 110 % scaling with
+a stubbed Tauri bridge running the desktop code paths:
+
+- **Drag and drop was dead on Windows.** Tauri's native drop handler is on
+  by default and, per its own docs, must be off for HTML5 drag-and-drop on
+  Windows; the app uses HTML5 DnD everywhere (clips, samples, devices, file
+  import). `dragDropEnabled: false` in `tauri.conf.json`.
+- **Canvases reallocated every frame at fractional scaling** (125/150 % is
+  the Windows laptop norm). `canvas.width !== W * dpr` never matched the
+  integer width. Shared `fitCanvas()` rounds; measured 121 reallocations in
+  2 s before, 0 after.
+- **Browser behaviour leaking in**: WebView2 keeps Edge's accelerator keys
+  and context menu and Tauri 2.11 exposes no switch. `desktopGuards.ts`
+  blocks browser-only keys (reload, print, find, history, devtools in
+  production) and the default menu outside text fields; app shortcuts are
+  untouched (checked against every modifier shortcut in the code).
+- **Exports** used `<a download>` (WebView2: Edge's download UI plus an
+  "allow multiple downloads" prompt for stems). Desktop exports now go to
+  the Downloads folder via a native `save_download` command.
+- **Raw binary IPC**: `sample_put_raw` / `save_download` take the bytes as
+  the request body with metadata in headers. Removes the base64 string
+  building that froze the UI while long samples loaded. Tested through
+  Tauri's real dispatcher (mock runtime).
+- Shortcut label shows Ctrl+K off macOS. Scrollbars are already styled
+  (`::-webkit-scrollbar`, honoured by WebView2), Segoe UI is in the font
+  stack, and WebView2 page zoom is off (Tauri default), so Ctrl+wheel stays
+  with the app.
+
 ### Still open
 
 - Hardware checks in `docs/WINDOWS.md` §3 (all W1/W3 exit tests).
-- W2: power-throttling opt-out, soak numbers per PC, multi-core decision.
+- W2: soak + benchmark numbers from the Windows PC (`docs/WINDOWS.md`
+  §3.4, §3.7), then the multi-core decision.
+- W4: the visual checks in `docs/WINDOWS.md` §3.8 on real WebView2.
+- Recording takes still come back from Rust as base64 (`record_take_stop`,
+  `master_capture_stop`); switching them to a raw response is the same
+  pattern as `sample_put_raw`.
 - W3: an "open ASIO control panel" button (cpal does not expose it); choosing
   an output pair other than 1–2 and input channels other than 1–2.
-- W4 (WebView2 UI pass), W5 (packaging: `currentUser` NSIS, offline WebView2,
+- W5 (packaging: `currentUser` NSIS, offline WebView2,
   "Synthtagram" release names), W6.

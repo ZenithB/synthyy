@@ -30,6 +30,7 @@ fn main() {
     });
     let project = sf_render::with_defaults(&project);
 
+    sf_io::prefer_performance(); // same as the app (Windows power throttling off)
     let io = sf_io::IoHandle::spawn();
     // SF_HOST = driver type (WASAPI / ASIO / CoreAudio), SF_DEVICE = output
     // device by exact name; both optional (docs/WINDOWS.md)

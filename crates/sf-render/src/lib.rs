@@ -124,6 +124,30 @@ pub fn render_project_with_bank(
     sample_rate: f32,
     bank: &sf_engine::SampleBank,
 ) -> Result<(Vec<f32>, Vec<f32>), String> {
+    let (mut engine, total) = prepare_engine(project, scope, sample_rate, bank)?;
+    let mut l = vec![0.0f32; total];
+    let mut r = vec![0.0f32; total];
+    const PULL: usize = 128; // MAX_BLOCK
+    for (cl, cr) in l.chunks_mut(PULL).zip(r.chunks_mut(PULL)) {
+        engine.process(cl, cr);
+        // dest-"midi" modulation: pending re-expansions run here, off the
+        // render path, so offline output matches live playback
+        engine.service();
+    }
+    Ok((l, r))
+}
+
+/// Build an offline engine for `scope` — project loaded, clips launched /
+/// arrangement started, transport playing — and return it with the render
+/// length in frames (scope length + [`TAIL_SEC`]). The caller pulls audio
+/// with `Engine::process` (and calls `service()` between pulls). Used by the
+/// renderer and by the CPU benchmark (examples/bench.rs).
+pub fn prepare_engine(
+    project: &ProjectJSON,
+    scope: &RenderScope,
+    sample_rate: f32,
+    bank: &sf_engine::SampleBank,
+) -> Result<(Engine, usize), String> {
     let p = with_defaults(project);
     let (from, ticks, scene_id) = scope_bounds(&p, scope)?;
 
@@ -151,17 +175,7 @@ pub fn render_project_with_bank(
 
     let bpm = if p.meta.bpm > 0.0 { p.meta.bpm } else { 120.0 };
     let total = (ticks_to_seconds(ticks, bpm) + TAIL_SEC) * sample_rate as f64;
-    let total = total.ceil() as usize;
-    let mut l = vec![0.0f32; total];
-    let mut r = vec![0.0f32; total];
-    const PULL: usize = 128; // MAX_BLOCK
-    for (cl, cr) in l.chunks_mut(PULL).zip(r.chunks_mut(PULL)) {
-        engine.process(cl, cr);
-        // dest-"midi" modulation: pending re-expansions run here, off the
-        // render path, so offline output matches live playback
-        engine.service();
-    }
-    Ok((l, r))
+    Ok((engine, total.ceil() as usize))
 }
 
 /// Resample planar stereo to `to_sr` via rubato SincFixedIn (no-op when equal).

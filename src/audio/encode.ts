@@ -3,6 +3,8 @@
 // WAV is 16-bit PCM; MP3 is CBR via lamejs (64/128/256 kbps). Mono downmixes L+R.
 
 import { Mp3Encoder } from '@breezystack/lamejs'
+import { isDesktop, nativeIo } from './native'
+import { toast } from '../state/store'
 
 export type Channels = 'stereo' | 'mono'
 export type AudioFormat = 'wav' | 'mp3'
@@ -93,7 +95,17 @@ export function extFor(format: AudioFormat): string {
   return format === 'mp3' ? 'mp3' : 'wav'
 }
 
+/** Save an export. Desktop: written straight to the Downloads folder by
+ *  the native side (no browser download UI — on Windows WebView2 would show
+ *  Edge's download panel and ask to "allow multiple downloads" for stems).
+ *  Browser: the usual <a download>. */
 export function download(blob: Blob, name: string) {
+  if (isDesktop()) {
+    nativeIo.saveDownload(name, blob)
+      .then(path => toast(`Saved to Downloads: ${path.split(/[\\/]/).pop()}`))
+      .catch(e => toast(`Couldn’t save ${name}: ${String(e).slice(0, 120)}`))
+    return
+  }
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = name

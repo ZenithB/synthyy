@@ -166,6 +166,58 @@ Audio settings → Native input → pick the interface input → connect an outp
 to an input with a cable → **Measure latency**. Expect roughly 15–30 ms on
 WASAPI and well under 10 ms on ASIO at 128 frames.
 
+### 3.7 CPU benchmark (W2 — decides whether multi-core rendering is needed)
+
+No audio device involved: this measures the PC's processor running the
+engine. Use `--release` (debug numbers are meaningless).
+
+```powershell
+cargo run --release -p sf-render --example bench -- src-tauri/assets/demo-project.json
+```
+
+It runs 1, 2, 4, 8… copies of the demo song inside every 128-frame block
+and prints the share of the 2.67 ms deadline used. The last line reads
+`RESULT: Nx this project fits…`. How to read N:
+
+| N | Meaning |
+|---|---|
+| 4 or more | One core has plenty of headroom — multi-core rendering not needed. |
+| 2 | Borderline for big projects at 64–128 frames; use 256 frames or report it. |
+| 1 or 0 | Multi-core rendering (plan Phase 8) is worth building — report it. |
+
+For reference, a cloud server core gave N = 4. Also run the all-fixtures
+mode (no arguments) and note the `TOTAL … x realtime` figure:
+
+```powershell
+cargo run --release -p sf-render --example bench
+```
+
+Copy the `TABLE |` line printed at the end of the soak test (3.4) and the
+two benchmark results into `docs/PARITY.md` (per-device CPU table).
+
+### 3.8 UI checks in the Windows webview (W4)
+
+Run the app (section 2) and check:
+
+1. **Drag and drop**: drag a clip between scene slots, drag a sample from
+   the browser onto a track, drag a device into a track, and drop a `.wav`
+   file from File Explorer onto the window. (These were all dead on Windows
+   before this change — Tauri's native drop handler swallowed them.)
+2. **Display scaling**: Settings > System > Display > Scale at **125 %**
+   and **150 %**. The piano roll, waveform editor and the session analyser
+   should be sharp, not blurry, and must not flicker during playback.
+3. **Browser keys do nothing**: Ctrl+R, F5, Ctrl+P, Ctrl+F, Alt+Left, the
+   mouse back button, and right-click on empty space (no browser menu).
+   App keys still work: Ctrl+Z / Ctrl+Y, Ctrl+K, Ctrl+D, Ctrl+A, Space, Tab.
+   Right-click in a text box still offers copy/paste.
+4. **Exports**: Export a WAV mixdown, then stems. Files appear in
+   `Downloads` with a toast per file and no "allow multiple downloads"
+   prompt. Save project file the same way.
+5. **Long sample**: import a 5-minute WAV and add it to a track. The UI
+   should stay responsive while it loads (samples now cross to the engine
+   as raw bytes, not a giant text string).
+6. The command palette hint reads **Ctrl+K** (not ⌘K).
+
 ## 4. Troubleshooting
 
 | Symptom | Likely cause |

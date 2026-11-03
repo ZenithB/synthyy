@@ -398,6 +398,41 @@ fn promote_rt(mmcss: bool) -> u8 {
     }
 }
 
+/// Opt the whole process out of Windows power throttling ("Efficiency mode"
+/// / EcoQoS). Windows 11 may otherwise run a window that is in the
+/// background or minimised on efficiency cores at reduced clocks, which
+/// raises audio-callback time unpredictably. Call once at startup. No-op on
+/// other platforms. Returns false if Windows refused (older Windows 10
+/// builds without the API — harmless).
+pub fn prefer_performance() -> bool {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Threading::{
+            GetCurrentProcess, ProcessPowerThrottling, SetProcessInformation,
+            PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+            PROCESS_POWER_THROTTLING_STATE,
+        };
+        // ControlMask = "I am deciding execution-speed throttling",
+        // StateMask = 0 = "...and the answer is never throttle".
+        let state = PROCESS_POWER_THROTTLING_STATE {
+            Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+            ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+            StateMask: 0,
+        };
+        SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            &state as *const _ as *const core::ffi::c_void,
+            core::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        )
+        .is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
 /// How long a running stream may go without a callback before it is
 /// considered dead (WASAPI ends its stream thread on ANY error, so a stall
 /// is the portable signal), and the grace period after opening.

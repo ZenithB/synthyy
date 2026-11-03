@@ -22,6 +22,7 @@ import { Icon } from './icons'
 
 // Automation targets available for a track (continuous params only).
 import { autoTargets } from '../audio/params'
+import { fitCanvas } from './canvas'
 
 const KEY_W = 48
 const LANE_H = 64
@@ -275,17 +276,11 @@ export function PianoRoll() {
       if (!needsDraw.current && !dragRef.current && !engine.playing && !wasPlaying) return
       wasPlaying = engine.playing
       needsDraw.current = false
-      const dpr = window.devicePixelRatio || 1
       const W = box.clientWidth
       const H = box.clientHeight
-      if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
-        canvas.width = W * dpr
-        canvas.height = H * dpr
-        canvas.style.width = `${W}px`
-        canvas.style.height = `${H}px`
-      }
+      const { sx, sy } = fitCanvas(canvas, W, H)
       const ctx = canvas.getContext('2d')!
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.setTransform(sx, 0, 0, sy, 0, 0)
       const len = clipMap.get('len') ?? BAR
       const pxPerTick = view.current.pxPerBar / BAR
       // live row height (vertical zoom) — shadows the outer const so a zoom drag

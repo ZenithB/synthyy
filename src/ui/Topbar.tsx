@@ -15,6 +15,9 @@ import { captureToClip, setKbdEnabled, isKbdEnabled } from '../audio/input'
 import { peersList, subscribeAwareness, awarenessVersion } from '../state/net'
 import { ticksToBBS } from '../types'
 
+// ⌘ on macOS, Ctrl+ elsewhere (the handlers accept both)
+const MOD_LABEL = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl+'
+
 const SWING_SPEC = { key: 'swing', label: 'Swing', min: 0, max: 1, def: 0, fmt: (v: number) => `${Math.round(v * 100)}%` }
 const HUMAN_SPEC = { key: 'humanize', label: 'Human', min: 0, max: 1, def: 0, fmt: (v: number) => `${Math.round(v * 100)}%` }
 const SWING_SUBS = [{ label: '1/4 note', val: '4n' }, { label: '1/8 note', val: '8n' }, { label: '1/16 note', val: '16n' }]
@@ -91,7 +94,7 @@ export function Topbar() {
 
   const moreMenu = (e: React.MouseEvent) => openMenu(e, [
     { label: <><Icon name="clock" size={12} /> Undo history</>, fn: () => setUI({ historyOpen: !ui.historyOpen }) },
-    { label: <><Icon name="more" size={12} /> Command palette &nbsp;⌘K</>, fn: () => setUI({ paletteOpen: true }) },
+    { label: <><Icon name="more" size={12} /> Command palette &nbsp;{MOD_LABEL}K</>, fn: () => setUI({ paletteOpen: true }) },
     { label: <><Icon name="keys" size={12} /> Keyboard piano: {kbdOn ? 'On' : 'Off'}</>, fn: () => { setKbdEnabled(!isKbdEnabled()); setKbdOn(isKbdEnabled()) } },
     { label: <><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={12} /> Theme: {theme === 'dark' ? 'Dark' : 'Light'}</>, fn: () => setUI({ theme: theme === 'dark' ? 'light' : 'dark' }) },
     'sep',

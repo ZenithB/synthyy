@@ -35,7 +35,7 @@ import {
 import { getAudioPrefs } from './prefs'
 import { getSampleBuffer, onSampleReady } from './samples'
 import { setUI, toast, ui } from '../state/store'
-import { nativeOutputPrefs } from './native'
+import { nativeIo, nativeOutputPrefs } from './native'
 import type { EngineApi, EngineMode, PerfStats } from './engine-api'
 
 type NativeSnapshot = {
@@ -83,18 +83,6 @@ function bufferForPrefs(): number {
 
 const linToDb = (lin: number) => (lin > 1e-5 ? 20 * Math.log10(lin) : -100)
 const posMod = (a: number, m: number) => ((a % m) + m) % m
-
-/** Float32Array → base64 of the raw little-endian bytes (sample_put wire
- *  format; all supported targets are LE, matching the Rust f32le decode). */
-function f32ToB64(a: Float32Array): string {
-  const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength)
-  let s = ''
-  const CHUNK = 0x8000 // keep fromCharCode's argument list small
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    s += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
-  }
-  return btoa(s)
-}
 
 type PartMirror = { key: string; startTicks: number; loopTicks: number }
 type PendingSlot = { action: 'launch' | 'stop'; key?: string; atTicks: number; loopTicks: number }
@@ -262,9 +250,9 @@ class NativeEngine implements EngineApi {
   /** Push referenced samples the native store doesn't have yet. Decoded
    *  buffers come from the shared sample store; ids still decoding from
    *  IndexedDB are skipped here and re-attempted from onSampleReady (mirrors
-   *  engine-tone's late-decode handling). Channels go as single-shot base64
-   *  f32le — Tauri's invoke handles multi-MB payloads; extremely long samples
-   *  (hundreds of MB) would need chunking, a known v1 limit. */
+   *  engine-tone's late-decode handling). Channels go as one raw f32le IPC
+   *  body (no base64 — see native.ts nativeIo); extremely long samples
+   *  (hundreds of MB) would still need chunking, a known v1 limit. */
   private async pushSamples() {
     if (this.pushingSamples) { this.samplesDirty = true; return }
     this.pushingSamples = true
@@ -277,12 +265,7 @@ class NativeEngine implements EngineApi {
           if (!buf) continue // onSampleReady re-enters when the decode lands
           const l = buf.getChannelData(0)
           const r = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null
-          await invoke('sample_put', {
-            id,
-            sampleRate: Math.round(buf.sampleRate),
-            lB64: f32ToB64(l),
-            rB64: r ? f32ToB64(r) : null,
-          })
+          await nativeIo.samplePut(id, buf.sampleRate, l, r)
           this.pushedSamples.add(id)
         }
       } while (this.samplesDirty)

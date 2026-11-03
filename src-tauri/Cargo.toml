@@ -23,6 +23,10 @@ sf-project.workspace = true
 sf-render.workspace = true
 base64.workspace = true
 
+[dev-dependencies]
+# mock runtime: dispatch real IPC requests (raw bodies + headers) in tests
+tauri = { version = "2", features = ["test"] }
+
 [features]
 default = []
 # Forward to sf-io: adds ASIO as a driver type on Windows (docs/WINDOWS.md).

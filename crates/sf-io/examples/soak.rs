@@ -77,6 +77,7 @@ fn main() {
         );
     }
 
+    sf_io::prefer_performance(); // same as the app (Windows power throttling off)
     let io = sf_io::IoHandle::spawn();
     // SF_HOST = driver type (WASAPI / ASIO / CoreAudio), SF_DEVICE = output
     // device by exact name; both optional (docs/WINDOWS.md)
@@ -142,6 +143,23 @@ fn main() {
         stats.over_budget,
         stats.peak_load,
         stats.max_callback_us,
+    );
+    // one line for the per-PC results table (docs/WINDOWS.md §3.4)
+    println!(
+        "TABLE | {} | {} | {} Hz | callback {}-{} frames | priority {} | xruns {} | misses {} | peak load {:.0}%",
+        info.host,
+        info.device,
+        info.sample_rate,
+        stats.min_callback_frames,
+        stats.max_callback_frames,
+        match stats.rt_priority {
+            sf_io::RT_MMCSS_OK => "MMCSS",
+            sf_io::RT_MMCSS_FAILED => "MMCSS FAILED",
+            _ => "host-managed",
+        },
+        stats.xruns,
+        stats.over_budget,
+        stats.peak_load * 100.0,
     );
     std::process::exit(if pass { 0 } else { 1 });
 }

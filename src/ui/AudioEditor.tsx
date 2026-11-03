@@ -13,6 +13,7 @@ import { Knob, NumberDrag } from './widgets'
 import { Icon } from './icons'
 import { getSampleBuffer } from '../audio/samples'
 import { ParamSpec, fmtDb } from '../audio/schema'
+import { fitCanvas } from './canvas'
 
 const PPQ = BAR / 4
 const GAIN_SPEC: ParamSpec = { key: 'gainDb', label: 'Gain', min: -24, max: 6, def: 0, fmt: fmtDb }
@@ -69,11 +70,10 @@ export function AudioEditor() {
       const canvas = canvasRef.current, box = boxRef.current
       if (!canvas || !box) return
       const b = getSampleBuffer(sampleId)
-      const dpr = window.devicePixelRatio || 1
       const W = box.clientWidth, H = box.clientHeight
-      if (canvas.width !== W * dpr) { canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.width = `${W}px`; canvas.style.height = `${H}px` }
+      const { sx, sy } = fitCanvas(canvas, W, H)
       const ctx = canvas.getContext('2d')!
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.setTransform(sx, 0, 0, sy, 0, 0)
       const css = getComputedStyle(document.documentElement)
       const C = (v: string, f = '#888') => css.getPropertyValue(v).trim() || f
       ctx.clearRect(0, 0, W, H)

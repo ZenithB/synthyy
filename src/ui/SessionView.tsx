@@ -25,6 +25,7 @@ import {
 } from './actions'
 import { MIDI_LOOPS, INST_PRESETS, DRUM_KITS, PROGRESSIONS } from '../packs'
 import { applyPreset, applyDrumKit } from './actions'
+import { fitCanvas } from './canvas'
 
 const PAN_SPEC = { key: 'pan', label: 'Pan', min: -1, max: 1, def: 0, fmt: (v: number) => (Math.abs(v) < 0.02 ? 'C' : v < 0 ? `${Math.round(-v * 50)}L` : `${Math.round(v * 50)}R`) }
 
@@ -35,11 +36,10 @@ function Analyzer() {
   useRaf(() => {
     const c = ref.current
     if (!c) return
-    const dpr = window.devicePixelRatio || 1
     const W = 108, H = 46
-    if (c.width !== W * dpr) { c.width = W * dpr; c.height = H * dpr; c.style.width = W + 'px'; c.style.height = H + 'px' }
+    const { sx, sy } = fitCanvas(c, W, H)
     const ctx = c.getContext('2d')!
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.setTransform(sx, 0, 0, sy, 0, 0)
     const css = getComputedStyle(document.documentElement)
     ctx.fillStyle = css.getPropertyValue('--bg0').trim()
     ctx.fillRect(0, 0, W, H)

@@ -42,8 +42,44 @@ export function isDesktop(): boolean {
   return typeof (window as any).__TAURI__ !== 'undefined'
 }
 
-function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  return (window as any).__TAURI__.core.invoke(cmd, args)
+function invoke<T>(
+  cmd: string,
+  args?: Record<string, unknown> | Uint8Array,
+  options?: { headers: Record<string, string> },
+): Promise<T> {
+  return (window as any).__TAURI__.core.invoke(cmd, args, options)
+}
+
+// ---- raw-binary IPC (W4) ----
+// Large payloads go as the raw request body (Uint8Array → application/
+// octet-stream) with metadata in headers, instead of base64 inside JSON —
+// building a base64 string of a long sample on the UI thread froze the app.
+// Header values must be ASCII, hence encodeURIComponent.
+
+/** Copy channels into one little-endian f32 byte buffer: L then R. */
+function f32Body(l: Float32Array, r: Float32Array | null): Uint8Array {
+  const out = new Uint8Array((r ? 2 : 1) * l.byteLength)
+  out.set(new Uint8Array(l.buffer, l.byteOffset, l.byteLength), 0)
+  if (r) out.set(new Uint8Array(r.buffer, r.byteOffset, Math.min(r.byteLength, l.byteLength)), l.byteLength)
+  return out
+}
+
+export const nativeIo = {
+  /** Webview-decoded PCM → the native sample bank. */
+  samplePut: (id: string, sampleRate: number, l: Float32Array, r: Float32Array | null) =>
+    invoke<void>('sample_put_raw', f32Body(l, r), {
+      headers: {
+        'x-sf-id': encodeURIComponent(id),
+        'x-sf-rate': String(Math.round(sampleRate)),
+        'x-sf-channels': r ? '2' : '1',
+      },
+    }),
+  /** Save bytes to the user's Downloads folder; resolves to the saved path
+   *  (a counter is appended if the name is taken). */
+  saveDownload: async (name: string, blob: Blob) =>
+    invoke<string>('save_download', new Uint8Array(await blob.arrayBuffer()), {
+      headers: { 'x-sf-name': encodeURIComponent(name) },
+    }),
 }
 
 export const nativeAudio = {
@@ -119,7 +155,7 @@ export const nativeRecord = {
   latencySet: (ms: number | null) => invoke<NativeLatency>('latency_set', { ms }),
 }
 
-/** base64 f32le → Float32Array (inverse of engine-native's f32ToB64). */
+/** base64 f32le → Float32Array (takes still arrive base64 from record_take_stop). */
 export function b64ToF32(b64: string): Float32Array {
   const bin = atob(b64)
   const bytes = new Uint8Array(bin.length)

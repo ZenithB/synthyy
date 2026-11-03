@@ -522,6 +522,121 @@ async fn sample_put(
     Ok(())
 }
 
+// ---- raw-binary IPC (docs/WINDOWS_PORT_PLAN.md W4) ----
+// Large payloads travel as the raw request body (Uint8Array on the JS side)
+// with metadata in headers, instead of base64 inside JSON: no 33 % size
+// overhead and, more importantly, no multi-hundred-MB string building on the
+// webview's UI thread (which froze the UI while a long sample loaded).
+
+/// Percent-decode a header value (the webview sends `encodeURIComponent`
+/// output, since HTTP header values must be ASCII).
+fn percent_decode(v: &str) -> String {
+    let b = v.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h << 4 | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn header(req: &tauri::ipc::Request<'_>, name: &str) -> Result<String, String> {
+    req.headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .ok_or_else(|| format!("missing header {name}"))
+}
+
+fn raw_body<'a>(req: &'a tauri::ipc::Request<'_>) -> Result<&'a [u8], String> {
+    match req.body() {
+        tauri::ipc::InvokeBody::Raw(b) => Ok(b),
+        _ => Err("expected a raw binary body".into()),
+    }
+}
+
+/// f32 little-endian bytes → samples (byte length must be a multiple of 4).
+fn f32le(bytes: &[u8]) -> Vec<f32> {
+    bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+}
+
+/// [`sample_put`] over raw IPC. Body: f32le PCM, the left channel then (when
+/// `x-sf-channels` is 2) the right, each `frames` long. Headers: `x-sf-id`
+/// (percent-encoded), `x-sf-rate`, `x-sf-channels`.
+#[tauri::command]
+async fn sample_put_raw(eng: State<'_, EngineState>, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let id = header(&request, "x-sf-id")?;
+    let sample_rate: u32 = header(&request, "x-sf-rate")?.parse().map_err(|_| "bad x-sf-rate")?;
+    let channels: usize = header(&request, "x-sf-channels")?.parse().map_err(|_| "bad x-sf-channels")?;
+    if sample_rate == 0 || !(1..=2).contains(&channels) {
+        return Err("sample_rate must be > 0 and channels 1 or 2".into());
+    }
+    let body = raw_body(&request)?;
+    if body.len() % (4 * channels) != 0 {
+        return Err("PCM byte length does not match the channel count".into());
+    }
+    let half = body.len() / channels;
+    let l = f32le(&body[..half]);
+    let r = if channels == 2 { f32le(&body[half..]) } else { Vec::new() };
+    let buf = std::sync::Arc::new(sf_dsp::sample::SampleBuf { sample_rate: sample_rate as f32, l, r });
+    let mut e = eng.0.lock().map_err(|_| "engine state poisoned")?;
+    e.bank.insert(id, buf);
+    repush_stored(&mut e);
+    Ok(())
+}
+
+/// Make a user-supplied file name safe on every OS: no path separators,
+/// no Windows-reserved characters or trailing dots/spaces, never empty.
+fn safe_file_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c })
+        .collect();
+    let trimmed = cleaned.trim().trim_end_matches(['.', ' ']).to_string();
+    if trimmed.is_empty() || trimmed.chars().all(|c| c == '.') { "export".into() } else { trimmed }
+}
+
+/// `dir/name`, or `dir/name (2).ext`, `(3)`… if taken.
+fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    (2..10_000)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
+}
+
+/// Desktop exports (mixdown / stems / live recording / project JSON) go
+/// straight to the user's Downloads folder. Replaces the browser `<a
+/// download>` path, which on Windows shows Edge's download UI and asks to
+/// "allow multiple downloads" for stems, and behaves differently on macOS.
+/// Body: the file bytes; header `x-sf-name` (percent-encoded). Returns the
+/// saved path.
+#[tauri::command]
+async fn save_download(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let name = safe_file_name(&header(&request, "x-sf-name")?);
+    let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = unique_path(&dir, &name);
+    std::fs::write(&path, raw_body(&request)?).map_err(|e| format!("could not save {}: {e}", path.display()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Ids currently held in the native sample store.
 #[tauri::command]
 fn sample_list(eng: State<'_, EngineState>) -> Result<Vec<String>, String> {
@@ -913,6 +1028,9 @@ pub fn run() {
         .manage(AudioState(Mutex::new(sf_io::IoHandle::spawn())))
         .manage(EngineState(Mutex::new(EngineInner::default())))
         .setup(|app| {
+            // Windows: keep the audio process out of "Efficiency mode"
+            // (no-op elsewhere; see sf_io::prefer_performance)
+            sf_io::prefer_performance();
             if std::env::var("SF_SMOKE").ok().as_deref() == Some("1") {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || run_smoke(handle));
@@ -947,6 +1065,8 @@ pub fn run() {
             set_tempo,
             engine_snapshot,
             sample_put,
+            sample_put_raw,
+            save_download,
             sample_list,
             export_mixdown,
             input_devices,
@@ -963,4 +1083,108 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_decoding_roundtrips_encode_uri_component() {
+        // encodeURIComponent("Kick 01 (é).wav")
+        assert_eq!(percent_decode("Kick%2001%20(%C3%A9).wav"), "Kick 01 (é).wav");
+        assert_eq!(percent_decode("plain"), "plain");
+        assert_eq!(percent_decode("bad%zz%"), "bad%zz%");
+    }
+
+    #[test]
+    fn file_names_are_made_safe() {
+        assert_eq!(safe_file_name("My Song - Bass.wav"), "My Song - Bass.wav");
+        assert_eq!(safe_file_name("a/b\\c:d*e?.wav"), "a_b_c_d_e_.wav");
+        assert_eq!(safe_file_name("../../etc"), ".._.._etc");
+        assert_eq!(safe_file_name("name. . "), "name");
+        assert_eq!(safe_file_name("   "), "export");
+        assert_eq!(safe_file_name(".."), "export");
+    }
+
+    #[test]
+    fn unique_path_appends_counter() {
+        let dir = std::env::temp_dir().join(format!("sf-unique-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = unique_path(&dir, "mix.wav");
+        assert_eq!(a, dir.join("mix.wav"));
+        std::fs::write(&a, b"x").unwrap();
+        assert_eq!(unique_path(&dir, "mix.wav"), dir.join("mix (2).wav"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// End-to-end through Tauri's real command dispatcher (mock runtime):
+    /// a raw f32le body + percent-encoded headers lands in the sample bank.
+    #[test]
+    fn sample_put_raw_dispatches_through_ipc() {
+        use tauri::ipc::{CallbackFn, InvokeBody};
+        let app = tauri::test::mock_builder()
+            .manage(EngineState(Mutex::new(EngineInner::default())))
+            .invoke_handler(tauri::generate_handler![sample_put_raw, sample_list])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("mock webview");
+        let call = |cmd: &str, body: InvokeBody, headers: &[(&'static str, &str)]| {
+            let mut map = tauri::http::HeaderMap::new();
+            for (k, v) in headers {
+                map.insert(*k, v.parse().unwrap());
+            }
+            tauri::test::get_ipc_response(
+                &webview,
+                tauri::webview::InvokeRequest {
+                    cmd: cmd.into(),
+                    callback: CallbackFn(0),
+                    error: CallbackFn(1),
+                    url: "tauri://localhost".parse().unwrap(),
+                    body,
+                    headers: map,
+                    invoke_key: tauri::test::INVOKE_KEY.into(),
+                },
+            )
+        };
+        // stereo: L = [0.25, 0.5], R = [-0.25, -0.5]
+        let bytes: Vec<u8> = [0.25f32, 0.5, -0.25, -0.5].iter().flat_map(|x| x.to_le_bytes()).collect();
+        let ok = call(
+            "sample_put_raw",
+            InvokeBody::Raw(bytes),
+            &[("x-sf-id", "kick%2001%20%C3%A9"), ("x-sf-rate", "48000"), ("x-sf-channels", "2")],
+        );
+        assert!(ok.is_ok(), "{ok:?}");
+        let ids = call("sample_list", InvokeBody::default(), &[]).unwrap();
+        let ids: Vec<String> = ids.deserialize().unwrap();
+        assert_eq!(ids, vec!["kick 01 é".to_string()]);
+        let state = app.state::<EngineState>();
+        let e = state.0.lock().unwrap();
+        let s = e.bank.get("kick 01 é").unwrap();
+        assert_eq!((s.l.as_slice(), s.r.as_slice(), s.sample_rate), (&[0.25, 0.5][..], &[-0.25, -0.5][..], 48000.0));
+        drop(e);
+        // odd byte count for 2 channels → rejected, not mis-split
+        let bad = call(
+            "sample_put_raw",
+            InvokeBody::Raw(vec![0; 12]),
+            &[("x-sf-id", "x"), ("x-sf-rate", "48000"), ("x-sf-channels", "2")],
+        );
+        assert!(bad.is_err());
+        // JSON body instead of raw → rejected
+        let json = call(
+            "sample_put_raw",
+            InvokeBody::Json(serde_json::json!({})),
+            &[("x-sf-id", "x"), ("x-sf-rate", "48000"), ("x-sf-channels", "1")],
+        );
+        assert!(json.is_err());
+    }
+
+    #[test]
+    fn f32le_decodes_little_endian() {
+        let v = [0.5f32, -1.0];
+        let bytes: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
+        assert_eq!(f32le(&bytes), v);
+    }
 }

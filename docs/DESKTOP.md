@@ -22,7 +22,8 @@ Click anywhere / press Play — the native engine starts on the remembered outpu
 system default until chosen). The section also has a test tone, Apply, and live
 callback-size / xrun / deadline-miss / load / thread-priority readouts.
 Unplugging the device or changing the system default restarts the engine on
-another device with a toast. PerfMonitor shows real callback numbers.
+another device with a toast. PerfMonitor shows real callback numbers. Exports (mixdown, stems, live
+recording, project file) are saved straight to the Downloads folder.
 
 What runs natively: all 11 instruments (samplers stream the webview's decoded
 samples over IPC), all 23 effects, MIDI fx, clip/scene launching, arrangement
@@ -64,6 +65,12 @@ SF_SMOKE=1 cargo run -p synthyy
 ```bash
 # xrun soak: N minutes at 64 frames under 4 busy-loop threads (master at -40 dB)
 cargo run --release -p sf-io --example soak -- src-tauri/assets/demo-project.json 30 64 --load 4
+```
+
+```bash
+# CPU benchmark (no audio device): all fixtures, then K-copies headroom
+cargo run --release -p sf-render --example bench
+cargo run --release -p sf-render --example bench -- src-tauri/assets/demo-project.json
 ```
 
 ```bash
