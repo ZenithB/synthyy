@@ -1042,6 +1042,30 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
         return { node, set: () => {}, grBands: () => [0, 0, 0], dispose: () => node.dispose() }
       }
     }
+    case 'gate': {
+      // Single AudioWorklet node (sf-gate): key filter + dual-threshold state
+      // machine + expander + lookahead. Module is preloaded at engine start and
+      // per-render by render.ts; if it isn't registered (or the context has no
+      // worklet support) the device degrades to a clean passthrough.
+      let grLast = 0
+      try {
+        const node = Tone.getContext().createAudioWorkletNode('sf-gate', {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+          channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+          processorOptions: { init: p },
+        }) as unknown as AudioWorkletNode
+        node.port.onmessage = e => { if (typeof e.data?.gr === 'number') grLast = e.data.gr }
+        return {
+          node: node as unknown as Tone.ToneAudioNode,
+          set: (k, v) => node.port.postMessage({ k, v }),
+          gr: () => -grLast,                      // worklet posts positive dB of reduction
+          dispose: () => { try { node.port.onmessage = null; node.disconnect() } catch { /* ok */ } },
+        }
+      } catch {
+        const node = new Tone.Gain(1)
+        return { node, set: () => {}, gr: () => 0, dispose: () => node.dispose() }
+      }
+    }
     case 'phaser': {
       // Tone composite on purpose — see the chorus note above (worklet port
       // tried and reverted for sounding different from the original device).

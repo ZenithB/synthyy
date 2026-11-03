@@ -268,6 +268,7 @@ export function Modal({ title, onClose, children, width = 440 }: {
 
 export type MenuItem =
   | { label: React.ReactNode; fn: () => void; danger?: boolean; disabled?: boolean }
+  | { label: React.ReactNode; items: MenuItem[] }   // submenu — opens a flyout
   | { custom: React.ReactNode }
   | 'sep'
 
@@ -279,9 +280,74 @@ export function openMenu(e: { clientX: number; clientY: number; preventDefault?:
   setMenuGlobal?.({ x: e.clientX, y: e.clientY, items })
 }
 
+// Clamp a fixed menu fully on-screen at (x, y) and cap its height so a long
+// list scrolls instead of running off the bottom edge.
+// Rects/innerHeight are visual px; style left/top are layout px (÷ UI zoom).
+// `flipX` is where to open instead when there's no room to the right — a
+// submenu folds back over its parent rather than being shoved off-screen.
+function placeMenu(el: HTMLElement, x: number, y: number, flipX?: number) {
+  el.style.maxHeight = ''
+  const z = Number((document.documentElement.style as any).zoom) || 1
+  const pad = 8 * z
+  const r = el.getBoundingClientRect()
+  let left = x
+  if (flipX !== undefined && left + r.width > window.innerWidth - pad) left = flipX - r.width
+  left = Math.max(pad, Math.min(left, window.innerWidth - r.width - pad))
+  const top = Math.max(pad, Math.min(y, window.innerHeight - r.height - pad))
+  el.style.top = `${top / z}px`
+  el.style.left = `${left / z}px`
+  el.style.maxHeight = `${(window.innerHeight - top - pad) / z}px`
+}
+
+// One level of the menu. Renders itself into a portal (so a parent's
+// `overflow-y: auto` can never clip a flyout) and recurses for submenus.
+// `onPick` tears the whole stack down after a leaf item runs.
+function MenuList({ items, x, y, flipX, onPick }: {
+  items: MenuItem[]; x: number; y: number; flipX?: number; onPick: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState<{ i: number; x: number; y: number; flipX: number } | null>(null)
+  useLayoutEffect(() => { if (ref.current) placeMenu(ref.current, x, y, flipX) }, [x, y, flipX, items])
+  const sub = open && items[open.i]
+  return createPortal(
+    <div className="ctx-menu" ref={ref} style={{ left: x, top: y }} onPointerDown={e => e.stopPropagation()}>
+      {items.map((it, i) => {
+        if (it === 'sep') return <div key={i} className="ctx-sep" />
+        if ('custom' in it) return <div key={i} className="ctx-custom" onPointerDown={e => e.stopPropagation()}>{it.custom}</div>
+        if ('items' in it) {
+          // Anchor the flyout to this row: overlap the parent's 1px border + 4px
+          // padding so the two panels read as one surface, and align the first
+          // child row with this one.
+          const anchor = (el: HTMLElement) => {
+            const r = el.getBoundingClientRect()
+            setOpen({ i, x: r.right - 5, y: r.top - 5, flipX: r.left + 5 })
+          }
+          return (
+            <button key={i} className={`ctx-item has-sub${open?.i === i ? ' sub-open' : ''}`}
+              onPointerEnter={e => anchor(e.currentTarget)}
+              onClick={e => anchor(e.currentTarget)}>
+              {it.label}<span className="ctx-sub-arrow">›</span>
+            </button>
+          )
+        }
+        return (
+          <button key={i} className={`ctx-item ${it.danger ? 'danger' : ''}`} disabled={it.disabled}
+            onPointerEnter={() => setOpen(null)}
+            onClick={() => { onPick(); it.fn() }}>
+            {it.label}
+          </button>
+        )
+      })}
+      {open && sub && typeof sub !== 'string' && 'items' in sub && (
+        <MenuList items={sub.items} x={open.x} y={open.y} flipX={open.flipX} onPick={onPick} />
+      )}
+    </div>,
+    document.body,
+  )
+}
+
 export function ContextMenuHost() {
   const [menu, setMenu] = useState<MenuState>(null)
-  const ref = useRef<HTMLDivElement>(null)
   setMenuGlobal = setMenu
   useEffect(() => {
     if (!menu) return
@@ -293,38 +359,8 @@ export function ContextMenuHost() {
       window.removeEventListener('blur', close)
     }
   }, [menu])
-  // Before paint: measure the real menu size, keep it fully on-screen, and cap
-  // its height to the viewport so long menus scroll instead of clipping.
-  // Rects/innerHeight are visual px; style left/top are layout px (÷ UI zoom).
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el || !menu) return
-    el.style.maxHeight = ''
-    const z = Number((document.documentElement.style as any).zoom) || 1
-    const pad = 8 * z
-    const r = el.getBoundingClientRect()
-    const top = Math.max(pad, Math.min(menu.y, window.innerHeight - r.height - pad))
-    const left = Math.max(pad, Math.min(menu.x, window.innerWidth - r.width - pad))
-    el.style.top = `${top / z}px`
-    el.style.left = `${left / z}px`
-    el.style.maxHeight = `${(window.innerHeight - top - pad) / z}px`
-  }, [menu])
   if (!menu) return null
-  return createPortal(
-    <div className="ctx-menu" ref={ref} style={{ left: menu.x, top: menu.y }} onPointerDown={e => e.stopPropagation()}>
-      {menu.items.map((it, i) => {
-        if (it === 'sep') return <div key={i} className="ctx-sep" />
-        if ('custom' in it) return <div key={i} className="ctx-custom" onPointerDown={e => e.stopPropagation()}>{it.custom}</div>
-        return (
-          <button key={i} className={`ctx-item ${it.danger ? 'danger' : ''}`} disabled={it.disabled}
-            onClick={() => { setMenu(null); it.fn() }}>
-            {it.label}
-          </button>
-        )
-      })}
-    </div>,
-    document.body,
-  )
+  return <MenuList items={menu.items} x={menu.x} y={menu.y} onPick={() => setMenu(null)} />
 }
 
 // ---------------- Color swatch row ----------------

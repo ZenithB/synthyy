@@ -296,6 +296,27 @@ static FX_MBCOMP: [ParamSpec; 14] = [
     ParamSpec { key: "b2_gain", label: "Hi Gain", min: -24.0, max: 24.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
 ];
 
+static FX_GATE: [ParamSpec; 18] = [
+    ParamSpec { key: "thresh", label: "Thresh", min: -80.0, max: 0.0, def: -40.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "up", label: "Up Thr", min: -40.0, max: 40.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "dn", label: "Dn Thr", min: -40.0, max: 40.0, def: -6.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "range", label: "Range", min: -100.0, max: 0.0, def: -60.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "ratio", label: "Ratio", min: 1.0, max: 20.0, def: 20.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "knee", label: "Knee", min: 0.0, max: 24.0, def: 3.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "attack", label: "Attack", min: 0.0001, max: 0.3, def: 0.002, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "hold", label: "Hold", min: 0.001, max: 2.0, def: 0.05, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "release", label: "Release", min: 0.005, max: 3.0, def: 0.15, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "look", label: "Look", min: 0.0, max: 10.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "hpf", label: "Key HP", min: 20.0, max: 2000.0, def: 20.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "lpf", label: "Key LP", min: 200.0, max: 20000.0, def: 20000.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "key", label: "Key", min: 0.0, max: 4.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Stereo", "Left", "Right", "Mid", "Side"]), rate_switch: false },
+    ParamSpec { key: "det", label: "Detect", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Peak", "RMS"]), rate_switch: false },
+    ParamSpec { key: "listen", label: "Listen", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Off", "On"]), rate_switch: false },
+    ParamSpec { key: "inverse", label: "Inverse", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Off", "On"]), rate_switch: false },
+    ParamSpec { key: "mix", label: "Mix", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "gain", label: "Output", min: -24.0, max: 24.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+];
+
 static FX_PHASER: [ParamSpec; 3] = [
     ParamSpec { key: "rate", label: "Rate", min: 0.01, max: 300.0, def: 0.8, curve: Curve::Exp, int: false, steps: None, rate_switch: true },
     ParamSpec { key: "octaves", label: "Sweep", min: 1.0, max: 6.0, def: 3.0, curve: Curve::Linear, int: true, steps: None, rate_switch: false },
@@ -360,7 +381,7 @@ static FX_AUTOTUNE: [ParamSpec; 4] = [
 ];
 
 /// Every effect type, in schema.ts order.
-pub static EFFECTS: [(&str, &[ParamSpec]); 23] = [
+pub static EFFECTS: [(&str, &[ParamSpec]); 24] = [
     ("eq", &FX_EQ),
     ("filter", &FX_FILTER),
     ("delay", &FX_DELAY),
@@ -373,6 +394,7 @@ pub static EFFECTS: [(&str, &[ParamSpec]); 23] = [
     ("comp", &FX_COMP),
     ("opto", &FX_OPTO),
     ("mbcomp", &FX_MBCOMP),
+    ("gate", &FX_GATE),
     ("phaser", &FX_PHASER),
     ("pingpong", &FX_PINGPONG),
     ("autofilt", &FX_AUTOFILT),

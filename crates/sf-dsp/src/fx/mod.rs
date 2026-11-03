@@ -15,6 +15,7 @@ pub mod duck;
 pub mod eq;
 pub mod eq7;
 pub mod filter;
+pub mod gate;
 pub mod mbcomp;
 pub mod opto;
 pub mod phaser;
@@ -29,9 +30,9 @@ pub mod widen;
 use crate::traits::EffectDsp;
 
 /// All frozen effect type strings, registry order.
-pub const EFFECT_TYPES: [&str; 23] = [
+pub const EFFECT_TYPES: [&str; 24] = [
     "eq", "filter", "delay", "reverb", "plate", "eq7", "chorus", "dist", "crush", "comp", "opto",
-    "mbcomp", "phaser", "pingpong", "autofilt", "trem", "autopan", "vib", "cheby", "widen",
+    "mbcomp", "gate", "phaser", "pingpong", "autofilt", "trem", "autopan", "vib", "cheby", "widen",
     "shift", "duck", "autotune",
 ];
 
@@ -49,6 +50,7 @@ pub fn make_effect(type_: &str) -> Option<Box<dyn EffectDsp>> {
         "comp" => Box::new(comp::CompFx::new()),
         "opto" => Box::new(opto::OptoFx::new()),
         "mbcomp" => Box::new(mbcomp::MbcompFx::new()),
+        "gate" => Box::new(gate::GateFx::new()),
         "phaser" => Box::new(phaser::PhaserFx::new()),
         "pingpong" => Box::new(pingpong::PingpongFx::new()),
         "autofilt" => Box::new(autofilt::AutofiltFx::new()),

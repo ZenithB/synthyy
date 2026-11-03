@@ -1338,6 +1338,165 @@
       ]
     },
     {
+      "type": "gate",
+      "params": [
+        {
+          "key": "thresh",
+          "label": "Thresh",
+          "min": -80,
+          "max": 0,
+          "def": -40
+        },
+        {
+          "key": "up",
+          "label": "Up Thr",
+          "min": -40,
+          "max": 40,
+          "def": 0
+        },
+        {
+          "key": "dn",
+          "label": "Dn Thr",
+          "min": -40,
+          "max": 40,
+          "def": -6
+        },
+        {
+          "key": "range",
+          "label": "Range",
+          "min": -100,
+          "max": 0,
+          "def": -60
+        },
+        {
+          "key": "ratio",
+          "label": "Ratio",
+          "min": 1,
+          "max": 20,
+          "def": 20
+        },
+        {
+          "key": "knee",
+          "label": "Knee",
+          "min": 0,
+          "max": 24,
+          "def": 3
+        },
+        {
+          "key": "attack",
+          "label": "Attack",
+          "min": 0.0001,
+          "max": 0.3,
+          "def": 0.002,
+          "exp": true
+        },
+        {
+          "key": "hold",
+          "label": "Hold",
+          "min": 0.001,
+          "max": 2,
+          "def": 0.05,
+          "exp": true
+        },
+        {
+          "key": "release",
+          "label": "Release",
+          "min": 0.005,
+          "max": 3,
+          "def": 0.15,
+          "exp": true
+        },
+        {
+          "key": "look",
+          "label": "Look",
+          "min": 0,
+          "max": 10,
+          "def": 0
+        },
+        {
+          "key": "hpf",
+          "label": "Key HP",
+          "min": 20,
+          "max": 2000,
+          "def": 20,
+          "exp": true
+        },
+        {
+          "key": "lpf",
+          "label": "Key LP",
+          "min": 200,
+          "max": 20000,
+          "def": 20000,
+          "exp": true
+        },
+        {
+          "key": "key",
+          "label": "Key",
+          "min": 0,
+          "max": 4,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Stereo",
+            "Left",
+            "Right",
+            "Mid",
+            "Side"
+          ]
+        },
+        {
+          "key": "det",
+          "label": "Detect",
+          "min": 0,
+          "max": 1,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Peak",
+            "RMS"
+          ]
+        },
+        {
+          "key": "listen",
+          "label": "Listen",
+          "min": 0,
+          "max": 1,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "key": "inverse",
+          "label": "Inverse",
+          "min": 0,
+          "max": 1,
+          "def": 0,
+          "int": true,
+          "steps": [
+            "Off",
+            "On"
+          ]
+        },
+        {
+          "key": "mix",
+          "label": "Mix",
+          "min": 0,
+          "max": 1,
+          "def": 1
+        },
+        {
+          "key": "gain",
+          "label": "Output",
+          "min": -24,
+          "max": 24,
+          "def": 0
+        }
+      ]
+    },
+    {
       "type": "phaser",
       "params": [
         {

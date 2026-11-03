@@ -19,6 +19,8 @@ export const fmtHz = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `
 // Low-mode rate: 2 decimals below 10Hz, 1 decimal up to 300Hz
 export const fmtRate = (v: number) => `${v < 10 ? v.toFixed(2) : v.toFixed(1)}Hz`
 export const fmtSec = (v: number) => (v < 1 ? `${Math.round(v * 1000)}ms` : `${v.toFixed(2)}s`)
+// Sub-millisecond resolution (gate attack goes down to 0.1 ms, where fmtSec reads "0ms").
+export const fmtSecFine = (v: number) => (v < 0.01 ? `${(v * 1000).toFixed(1)}ms` : fmtSec(v))
 export const fmtDb = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}dB`
 export const fmtPct = (v: number) => `${Math.round(v * 100)}%`
 export const fmtSemi = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}st`
@@ -194,7 +196,19 @@ export const INSTRUMENTS: InstrumentSchema[] = [
 ]
 
 // ----------------- effects -----------------
-export type EffectSchema = { type: string; label: string; icon: string; params: ParamSpec[] }
+// `group` is UI-only: it buckets the add-effect menu into submenus so the list
+// of 23 doesn't arrive as one wall. It is NOT part of the project schema (the
+// Rust registry dump reads type + params only) — but it is required, so a new
+// effect can't be added without deciding where in the menu it belongs.
+//   Dynamics     — level over time (compression, ducking)
+//   Equalisation — level by frequency (EQs, filters)
+//   Harmonic     — adds or moves frequency content (drive, bitcrush, pitch)
+//   Temporal     — delay- or phase-based, incl. LFO-modulated (verb, echo, mod)
+//   Other        — everything else (stereo utilities)
+export const FX_GROUPS = ['Dynamics', 'Equalisation', 'Harmonic', 'Temporal', 'Other'] as const
+export type FxGroup = (typeof FX_GROUPS)[number]
+
+export type EffectSchema = { type: string; label: string; icon: string; group: FxGroup; params: ParamSpec[] }
 
 // 7-band parametric EQ: band 0 = low shelf, 1–5 = peaking, 6 = high shelf.
 // Flat b{i}_* keys (like the drum kit / multiband) so presets, automation,
@@ -219,7 +233,7 @@ function eq7Params(): ParamSpec[] {
 
 export const EFFECTS: EffectSchema[] = [
   {
-    type: 'eq', label: 'EQ Three', icon: 'eq',
+    type: 'eq', label: 'EQ Three', icon: 'eq', group: 'Equalisation',
     params: [
       { key: 'low', label: 'Low', min: -12, max: 12, def: 0, fmt: fmtDb },
       { key: 'mid', label: 'Mid', min: -12, max: 12, def: 0, fmt: fmtDb },
@@ -227,7 +241,7 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'filter', label: 'Filter', icon: 'filter',
+    type: 'filter', label: 'Filter', icon: 'filter', group: 'Equalisation',
     params: [
       { key: 'ftype', label: 'Type', min: 0, max: 2, def: 0, int: true, steps: ['LP', 'HP', 'BP'] },
       { key: 'freq', label: 'Freq', min: 40, max: 18000, def: 2000, exp: true, fmt: fmtHz },
@@ -237,7 +251,7 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'delay', label: 'Echo', icon: 'echo',
+    type: 'delay', label: 'Echo', icon: 'echo', group: 'Temporal',
     params: [
       { key: 'time', label: 'Time', min: 0, max: DELAY_DIVS.length - 1, def: 2, int: true, steps: DELAY_DIVS },
       { key: 'fb', label: 'Feedback', min: 0, max: 0.85, def: 0.35, fmt: fmtPct },
@@ -245,7 +259,7 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'reverb', label: 'Reverb', icon: 'reverb',
+    type: 'reverb', label: 'Reverb', icon: 'reverb', group: 'Temporal',
     params: [
       { key: 'size', label: 'Size', min: 0.2, max: 10, def: 2.2, exp: true, fmt: fmtSec },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 0.3, fmt: fmtPct },
@@ -254,7 +268,7 @@ export const EFFECTS: EffectSchema[] = [
   {
     // Plate model: instantly-dense synthesized plate IR through a convolver,
     // with pre-delay and a damping filter on the wet path (see devices.ts).
-    type: 'plate', label: 'Plate Verb', icon: 'plate',
+    type: 'plate', label: 'Plate Verb', icon: 'plate', group: 'Temporal',
     params: [
       { key: 'decay', label: 'Decay', min: 0.3, max: 8, def: 1.8, exp: true, fmt: fmtSec },
       { key: 'predelay', label: 'PreDelay', min: 0, max: 0.2, def: 0.02, fmt: v => `${Math.round(v * 1000)}ms` },
@@ -265,11 +279,11 @@ export const EFFECTS: EffectSchema[] = [
   {
     // 7-band parametric EQ: low shelf, 5 peaking bands, high shelf. Custom
     // graphic card (draggable dots + response curve + RTA) in DeviceRack.
-    type: 'eq7', label: 'EQ Seven', icon: 'eq',
+    type: 'eq7', label: 'EQ Seven', icon: 'eq', group: 'Equalisation',
     params: eq7Params(),
   },
   {
-    type: 'chorus', label: 'Chorus', icon: 'chorus',
+    type: 'chorus', label: 'Chorus', icon: 'chorus', group: 'Temporal',
     params: [
       { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 1.5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.5, fmt: fmtPct },
@@ -277,21 +291,21 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'dist', label: 'Drive', icon: 'bolt',
+    type: 'dist', label: 'Drive', icon: 'bolt', group: 'Harmonic',
     params: [
       { key: 'amt', label: 'Drive', min: 0, max: 1, def: 0.4, fmt: fmtPct },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
     ],
   },
   {
-    type: 'crush', label: 'Crusher', icon: 'crush',
+    type: 'crush', label: 'Crusher', icon: 'crush', group: 'Harmonic',
     params: [
       { key: 'bits', label: 'Bits', min: 1, max: 16, def: 8, int: true, fmt: v => `${Math.round(v)}bit` },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
     ],
   },
   {
-    type: 'comp', label: 'Compressor', icon: 'comp',
+    type: 'comp', label: 'Compressor', icon: 'comp', group: 'Dynamics',
     params: [
       { key: 'thresh', label: 'Thresh', min: -60, max: 0, def: -20, fmt: fmtDb },
       { key: 'ratio', label: 'Ratio', min: 1, max: 20, def: 4, fmt: v => `${v.toFixed(0)}:1` },
@@ -303,7 +317,7 @@ export const EFFECTS: EffectSchema[] = [
     // LA-2A-style optical compressor: soft-knee, gentle program-dependent
     // levelling. Just Peak Reduction + makeup Gain + a Comp/Limit switch, like
     // the hardware (ratio/attack/release are fixed by the "opto cell" model).
-    type: 'opto', label: 'Opto Comp', icon: 'opto',
+    type: 'opto', label: 'Opto Comp', icon: 'opto', group: 'Dynamics',
     params: [
       { key: 'reduction', label: 'Peak Redux', min: 0, max: 1, def: 0.4, fmt: fmtPct },
       { key: 'gain', label: 'Gain', min: -12, max: 24, def: 0, fmt: fmtDb },
@@ -315,7 +329,7 @@ export const EFFECTS: EffectSchema[] = [
     // (per-band threshold/ratio handles + GR meters) in DeviceRack; the engine
     // runs it as a single AudioWorklet node (sf-mbdyn). Band params are flat keys
     // (b{i}_*) like the drum kit, so presets/automation/macros all just work.
-    type: 'mbcomp', label: 'Multiband', icon: 'mbcomp',
+    type: 'mbcomp', label: 'Multiband', icon: 'mbcomp', group: 'Dynamics',
     params: [
       { key: 'mode', label: 'Mode', min: 0, max: 1, def: 0, int: true, steps: ['Comp', 'Expand'] },
       { key: 'xlo', label: 'Lo×', min: 60, max: 1000, def: 250, exp: true, fmt: fmtHz },
@@ -334,7 +348,47 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'phaser', label: 'Phaser', icon: 'phaser',
+    // Advanced gate / downward expander, one AudioWorklet node (sf-gate).
+    //
+    // Detector: key = a channel selection (Stereo/L/R/Mid/Side) through a
+    // bandpass pair (hpf..lpf) — "listen" monitors that signal so the band can
+    // be dialled by ear. Peak or RMS.
+    //
+    // Open/close use SEPARATE thresholds, both as dB offsets from `thresh`:
+    // the gate opens when the key rises past thresh+up and closes when it
+    // falls below thresh+dn. dn < up is classic hysteresis (no chatter);
+    // up = dn = 0 is a plain expander; dn > up crosses the two, so the gate
+    // closes on the way down at a level it would not yet have opened at on the
+    // way up — it clips note sustains and re-opens on transients.
+    //
+    // While closed the signal is expanded downward by `ratio` (1:1 … 20:1,
+    // where 20 reads "Gate" = infinite) and never pushed further than `range`.
+    // `inverse` mirrors the key level about the threshold, so the gate passes
+    // what is BELOW it and clamps what is above.
+    type: 'gate', label: 'Gate', icon: 'gate', group: 'Dynamics',
+    params: [
+      { key: 'thresh', label: 'Thresh', min: -80, max: 0, def: -40, fmt: fmtDb },
+      { key: 'up', label: 'Up Thr', min: -40, max: 40, def: 0, fmt: fmtDb },
+      { key: 'dn', label: 'Dn Thr', min: -40, max: 40, def: -6, fmt: fmtDb },
+      { key: 'range', label: 'Range', min: -100, max: 0, def: -60, fmt: fmtDb },
+      { key: 'ratio', label: 'Ratio', min: 1, max: 20, def: 20, fmt: v => (v >= 19.95 ? 'Gate' : `${v.toFixed(1)}:1`) },
+      { key: 'knee', label: 'Knee', min: 0, max: 24, def: 3, fmt: v => `${v.toFixed(1)}dB` },
+      { key: 'attack', label: 'Attack', min: 0.0001, max: 0.3, def: 0.002, exp: true, fmt: fmtSecFine },
+      { key: 'hold', label: 'Hold', min: 0.001, max: 2, def: 0.05, exp: true, fmt: fmtSecFine },
+      { key: 'release', label: 'Release', min: 0.005, max: 3, def: 0.15, exp: true, fmt: fmtSecFine },
+      { key: 'look', label: 'Look', min: 0, max: 10, def: 0, fmt: v => `${v.toFixed(1)}ms` },
+      { key: 'hpf', label: 'Key HP', min: 20, max: 2000, def: 20, exp: true, fmt: fmtHz },
+      { key: 'lpf', label: 'Key LP', min: 200, max: 20000, def: 20000, exp: true, fmt: fmtHz },
+      { key: 'key', label: 'Key', min: 0, max: 4, def: 0, int: true, steps: ['Stereo', 'Left', 'Right', 'Mid', 'Side'] },
+      { key: 'det', label: 'Detect', min: 0, max: 1, def: 0, int: true, steps: ['Peak', 'RMS'] },
+      { key: 'listen', label: 'Listen', min: 0, max: 1, def: 0, int: true, steps: ['Off', 'On'] },
+      { key: 'inverse', label: 'Inverse', min: 0, max: 1, def: 0, int: true, steps: ['Off', 'On'] },
+      { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
+      { key: 'gain', label: 'Output', min: -24, max: 24, def: 0, fmt: fmtDb },
+    ],
+  },
+  {
+    type: 'phaser', label: 'Phaser', icon: 'phaser', group: 'Temporal',
     params: [
       { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 0.8, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'octaves', label: 'Sweep', min: 1, max: 6, def: 3, int: true, fmt: v => `${Math.round(v)}oct` },
@@ -342,7 +396,7 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'pingpong', label: 'Ping Pong', icon: 'pingpong',
+    type: 'pingpong', label: 'Ping Pong', icon: 'pingpong', group: 'Temporal',
     params: [
       { key: 'time', label: 'Time', min: 0, max: DELAY_DIVS.length - 1, def: 2, int: true, steps: DELAY_DIVS },
       { key: 'fb', label: 'Feedback', min: 0, max: 0.85, def: 0.4, fmt: fmtPct },
@@ -350,7 +404,7 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'autofilt', label: 'Auto Filter', icon: 'autofilt',
+    type: 'autofilt', label: 'Auto Filter', icon: 'autofilt', group: 'Equalisation',
     params: [
       { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 1, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.7, fmt: fmtPct },
@@ -359,7 +413,7 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'trem', label: 'Tremolo', icon: 'trem',
+    type: 'trem', label: 'Tremolo', icon: 'trem', group: 'Temporal',
     params: [
       { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.6, fmt: fmtPct },
@@ -367,14 +421,14 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'autopan', label: 'Auto Pan', icon: 'autopan',
+    type: 'autopan', label: 'Auto Pan', icon: 'autopan', group: 'Temporal',
     params: [
       { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 1.5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 1, def: 0.8, fmt: fmtPct },
     ],
   },
   {
-    type: 'vib', label: 'Vibrato', icon: 'vib',
+    type: 'vib', label: 'Vibrato', icon: 'vib', group: 'Temporal',
     params: [
       { key: 'rate', label: 'Rate', min: 0.01, max: 300, def: 5, exp: true, rateSwitch: true, fmt: fmtRate },
       { key: 'depth', label: 'Depth', min: 0, max: 0.6, def: 0.15, fmt: fmtPct },
@@ -382,27 +436,27 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'cheby', label: 'Heat', icon: 'heat',
+    type: 'cheby', label: 'Heat', icon: 'heat', group: 'Harmonic',
     params: [
       { key: 'order', label: 'Order', min: 2, max: 14, def: 3, int: true, fmt: v => `${Math.round(v)}` },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 0.35, fmt: fmtPct },
     ],
   },
   {
-    type: 'widen', label: 'Widener', icon: 'widen',
+    type: 'widen', label: 'Widener', icon: 'widen', group: 'Other',
     params: [
       { key: 'width', label: 'Width', min: 0, max: 1, def: 0.8, fmt: fmtPct },
     ],
   },
   {
-    type: 'shift', label: 'Freq Shift', icon: 'shift',
+    type: 'shift', label: 'Freq Shift', icon: 'shift', group: 'Harmonic',
     params: [
       { key: 'amt', label: 'Shift', min: -400, max: 400, def: 60, fmt: v => `${Math.round(v)}Hz` },
       { key: 'mix', label: 'Mix', min: 0, max: 1, def: 0.4, fmt: fmtPct },
     ],
   },
   {
-    type: 'duck', label: 'Sidechain', icon: 'duck',
+    type: 'duck', label: 'Sidechain', icon: 'duck', group: 'Dynamics',
     params: [
       { key: 'rate', label: 'Rate', min: 0, max: DUCK_DIVS.length - 1, def: 1, int: true, steps: DUCK_DIVS },
       { key: 'amount', label: 'Amount', min: 0, max: 1, def: 0.7, fmt: fmtPct },
@@ -410,7 +464,7 @@ export const EFFECTS: EffectSchema[] = [
     ],
   },
   {
-    type: 'autotune', label: 'Auto-Tune', icon: 'autotune',
+    type: 'autotune', label: 'Auto-Tune', icon: 'autotune', group: 'Harmonic',
     params: [
       { key: 'amount', label: 'Amount', min: 0, max: 1, def: 1, fmt: fmtPct },
       { key: 'speed', label: 'Speed', min: 1, max: 200, def: 20, exp: true, fmt: v => `${Math.round(v)}ms` },
@@ -425,6 +479,11 @@ export function instSchema(type: string) {
 }
 export function fxSchema(type: string) {
   return EFFECTS.find(e => e.type === type) ?? EFFECTS[0]
+}
+export function fxByGroup(): { group: FxGroup; items: EffectSchema[] }[] {
+  return FX_GROUPS
+    .map(group => ({ group, items: EFFECTS.filter(e => e.group === group) }))
+    .filter(g => g.items.length > 0)
 }
 export function defaultsFor(specs: ParamSpec[]): Record<string, number> {
   const out: Record<string, number> = {}

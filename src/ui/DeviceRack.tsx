@@ -19,7 +19,7 @@ import { useUI, toast } from '../state/store'
 import { useY, useRaf } from './hooks'
 import { Knob, openMenu, beginVDrag, MenuItem } from './widgets'
 import {
-  INSTRUMENTS, EFFECTS, instSchema, fxSchema, defaultsFor,
+  INSTRUMENTS, EFFECTS, instSchema, fxSchema, defaultsFor, fxByGroup,
   LFO_SHAPES, LFO_DIVS, LFO_PARAMS, MIDI_FX, midiFxSchema, mixSpec, fmtPct, fmtDb, ParamSpec,
   EQ7_BANDS, EQ7_FREQS, eq7BandType, RATE_MODES, RATE_SYNC_SPEC, RATE_HI_SPEC,
 } from '../audio/schema'
@@ -328,12 +328,12 @@ function InstrumentPanel({ trackId, track }: { trackId: string; track: Y.Map<any
 
 // Live gain-reduction meter for compressor-type effects (comp / opto). Fills
 // downward as the compressor pulls the signal; reads the engine each frame.
-function GrMeter({ trackId, fxId }: { trackId: string; fxId: string }) {
+function GrMeter({ trackId, fxId, max = 24 }: { trackId: string; fxId: string; max?: number }) {
   const fill = useRef<HTMLDivElement>(null)
   const val = useRef<HTMLSpanElement>(null)
   useRaf(() => {
     const gr = Math.max(0, -engine.deviceReductionDb(trackId, fxId))   // dB of reduction
-    if (fill.current) fill.current.style.width = `${Math.min(100, (gr / 24) * 100)}%`
+    if (fill.current) fill.current.style.width = `${Math.min(100, (gr / max) * 100)}%`
     if (val.current) val.current.textContent = gr > 0.05 ? `−${gr.toFixed(1)}` : '0.0'
   })
   return (
@@ -653,9 +653,12 @@ function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
   const on = !!fx.get('on')
   const params = fx.get('params') as Y.Map<number>
   const schema = fxSchema(type)
-  const isComp = type === 'comp' || type === 'opto'
+  // Devices that report live gain reduction. The gate's range reaches −100 dB,
+  // so its meter is scaled to 60 dB — on the 24 dB comp scale it just pins.
+  const grMax = type === 'gate' ? 60 : 24
+  const hasGr = type === 'comp' || type === 'opto' || type === 'gate'
   return (
-    <div className={`device fx-device ${on ? '' : 'bypassed'} ${type === 'mbcomp' || type === 'eq7' ? 'mbcomp-device' : ''}`}>
+    <div className={`device fx-device ${on ? '' : 'bypassed'} ${type === 'mbcomp' || type === 'eq7' || type === 'gate' ? 'mbcomp-device' : ''}`}>
       <div className="device-head">
         <button className={`power ${on ? 'on' : ''}`} data-info="Bypass effect" onClick={() => setFxOn(trackId, fxId, !on)}><Icon name="power" size={13} /></button>
         <span className="device-title"><Icon name={schema.icon} size={13} /> {schema.label}</span>
@@ -677,7 +680,7 @@ function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
               : <Knob key={spec.key} spec={spec} value={params.get(spec.key) ?? spec.def} onChange={v => setFxParam(trackId, fxId, spec.key, v)} size={38} />)}
           </div>
           {type === 'duck' && <DuckSource trackId={trackId} fxId={fxId} fx={fx} />}
-          {isComp && <GrMeter trackId={trackId} fxId={fxId} />}
+          {hasGr && <GrMeter trackId={trackId} fxId={fxId} max={grMax} />}
         </>
       )}
       <DeviceOut trackId={trackId} deviceId={fxId} out={fx.get('out') ?? 0} onChange={v => setFxOut(trackId, fxId, v)} />
@@ -856,6 +859,19 @@ function MacroPanel({ trackId, track }: { trackId: string; track: Y.Map<any> }) 
   )
 }
 
+// Add-effect menu: 23+ effects is too many for one list, so they arrive as
+// submenus by family (see FX_GROUPS in schema.ts). Same menu for a track chain
+// and the master bus — only the target differs.
+function fxMenu(trackId: string): MenuItem[] {
+  return fxByGroup().map(({ group, items }) => ({
+    label: group,
+    items: items.map(ef => ({
+      label: <><Icon name={ef.icon} size={12} /> {ef.label}</>,
+      fn: () => addFx(trackId, ef.type, defaultsFor(ef.params)),
+    })),
+  }))
+}
+
 // Master-bus effect chain. The whole mix passes through these (after every
 // track + return) before the limiter — live and in exports. Reuses FxCard with
 // the special 'master' target, so every effect (incl. the new comp/opto/
@@ -868,10 +884,7 @@ function MasterRack() {
       <div className="chain-arrow">→</div>
       {masterFx.toArray().map(f => <FxCard key={f.get('id')} trackId="master" fx={f} />)}
       <button className="add-fx" data-info="Add an effect to the master bus (applies to the whole mix)"
-        onClick={e => openMenu(e, EFFECTS.map(ef => ({
-          label: <><Icon name={ef.icon} size={12} /> {ef.label}</>,
-          fn: () => addFx('master', ef.type, defaultsFor(ef.params)),
-        })))}>
+        onClick={e => openMenu(e, fxMenu('master'))}>
         <Icon name="plus" size={12} /> Effect
       </button>
     </div>
@@ -919,10 +932,7 @@ export function DeviceRack() {
       <button
         className="add-fx"
         data-info="Add an effect to this track's chain"
-        onClick={e => openMenu(e, EFFECTS.map(ef => ({
-          label: <><Icon name={ef.icon} size={12} /> {ef.label}</>,
-          fn: () => addFx(selTrackId, ef.type, defaultsFor(ef.params)),
-        })))}
+        onClick={e => openMenu(e, fxMenu(selTrackId))}
       >
         <Icon name="plus" size={12} /> Effect
       </button>

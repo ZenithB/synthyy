@@ -119,7 +119,7 @@ function buildCommands(): Cmd[] {
   ]
   EFFECTS.forEach(ef => cmds.push({
     title: `Add effect: ${ef.label}`,
-    hint: 'selected track',
+    hint: `${ef.group} · selected track`,
     run: () => { if (ui.selTrackId) addFx(ui.selTrackId, ef.type, defaultsFor(ef.params)); else toast('Select a track first') },
   }))
   INST_PRESETS.forEach(p => cmds.push({

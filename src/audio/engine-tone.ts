@@ -389,14 +389,17 @@ class Engine implements EngineApi {
   // falls back cleanly (passthrough / Tone composite) if registration fails.
   private mbWorkletReady: Promise<void> | null = null
   private fxWorkletReady: Promise<void> | null = null
+  private gateWorkletReady: Promise<void> | null = null
   private async ensureMbWorklet() {
     try {
       const ctx = Tone.getContext().rawContext as AudioContext
       if (!ctx.audioWorklet) return
       if (!this.mbWorkletReady) this.mbWorkletReady = ctx.audioWorklet.addModule('/sf-mbdyn.js')
       if (!this.fxWorkletReady) this.fxWorkletReady = ctx.audioWorklet.addModule('/sf-fx.js')
+      if (!this.gateWorkletReady) this.gateWorkletReady = ctx.audioWorklet.addModule('/sf-gate.js')
       await this.mbWorkletReady
       await this.fxWorkletReady
+      await this.gateWorkletReady
     } catch { /* best-effort; devices degrade to passthrough/Tone if unavailable */ }
   }
 

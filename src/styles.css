@@ -554,6 +554,9 @@ button { cursor: pointer; background: none; border: none; }
 .ctx-item:hover { background: var(--bg3); }
 .ctx-item.danger { color: var(--danger); }
 .ctx-item:disabled { opacity: 0.4; }
+.ctx-item.has-sub.sub-open { background: var(--bg3); }
+.ctx-sub-arrow { margin-left: auto; padding-left: 10px; color: var(--dim); font-size: 14px; line-height: 1; }
+.ctx-item.has-sub:hover .ctx-sub-arrow, .ctx-item.sub-open .ctx-sub-arrow { color: var(--accent); }
 .ctx-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 .ctx-custom { padding: 4px 8px; }
 .color-row { display: flex; gap: 4px; flex-wrap: wrap; }
