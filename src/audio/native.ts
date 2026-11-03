@@ -8,7 +8,8 @@
 // @tauri-apps/api dependency — in a plain browser isDesktop() is false and
 // nothing here is called.
 
-export type NativeDevice = { name: string; is_default: boolean }
+/** `channels` = channel count in the listed direction (0/absent = unknown). */
+export type NativeDevice = { name: string; is_default: boolean; channels?: number }
 /** A driver type compiled into the desktop build: CoreAudio (macOS),
  *  WASAPI (Windows), ASIO (Windows builds with the `asio` feature). */
 export type NativeHost = { name: string; is_default: boolean }
@@ -86,8 +87,8 @@ export const nativeAudio = {
   hosts: () => invoke<NativeHost[]>('audio_hosts'),
   /** host null = the driver type currently in use */
   devices: (host: string | null = null) => invoke<NativeDevice[]>('audio_devices', { host }),
-  startTone: (device: string | null, bufferFrames: number | null, host: string | null = null) =>
-    invoke<NativeStreamInfo>('audio_start_tone', { host, device, bufferFrames }),
+  startTone: (device: string | null, bufferFrames: number | null, host: string | null = null, outFirst: number | null = null) =>
+    invoke<NativeStreamInfo>('audio_start_tone', { host, device, bufferFrames, outFirst }),
   stop: () => invoke<void>('audio_stop'),
   stats: () => invoke<NativeStats>('audio_stats'),
 }
@@ -98,7 +99,9 @@ export const nativeAudio = {
 // Device names are per-machine, so this lives in localStorage like the
 // per-track input choice (state/inputs.ts).
 
-export type NativeOutputPrefs = { host: string | null; device: string | null; buffer: number | null }
+/** `outFirst`: 0-based first device output of the stereo pair (0 = outputs
+ *  1–2, 2 = 3–4…); null = 1–2. */
+export type NativeOutputPrefs = { host: string | null; device: string | null; buffer: number | null; outFirst?: number | null }
 const OUT_KEY = 'sf-native-output'
 
 export function nativeOutputPrefs(): NativeOutputPrefs {
@@ -108,9 +111,10 @@ export function nativeOutputPrefs(): NativeOutputPrefs {
       host: typeof p.host === 'string' ? p.host : null,
       device: typeof p.device === 'string' ? p.device : null,
       buffer: typeof p.buffer === 'number' ? p.buffer : null,
+      outFirst: typeof p.outFirst === 'number' ? p.outFirst : null,
     }
   } catch {
-    return { host: null, device: null, buffer: null }
+    return { host: null, device: null, buffer: null, outFirst: null }
   }
 }
 
@@ -146,7 +150,9 @@ export const nativeRecord = {
     invoke<NativeStreamInfo>('input_start', { device, bufferFrames }),
   inputStop: () => invoke<void>('input_stop'),
   inputInfo: () => invoke<NativeStreamInfo | null>('input_info'),
-  takeStart: () => invoke<NativeTakeStart>('record_take_start'),
+  /** `first`/`count`: 0-based device inputs to keep (default inputs 1–2). */
+  takeStart: (first: number | null = null, count: number | null = null) =>
+    invoke<NativeTakeStart>('record_take_start', { channelFirst: first, channelCount: count }),
   takeStop: () => invoke<NativePcm>('record_take_stop'),
   masterStart: () => invoke<void>('master_capture_start'),
   masterStop: () => invoke<NativePcm>('master_capture_stop'),

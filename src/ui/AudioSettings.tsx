@@ -122,6 +122,7 @@ function NativeAudioSection() {
   const [devices, setDevices] = useState<NativeDevice[]>([])
   const [device, setDevice] = useState<string | null>(saved.device)
   const [buffer, setBuffer] = useState<number | null>(saved.buffer)
+  const [outFirst, setOutFirst] = useState<number>(saved.outFirst ?? 0)
   const [stream, setStream] = useState<NativeStreamInfo | null>(null)
   const [stats, setStats] = useState<NativeStats | null>(null)
   const [err, setErr] = useState('')
@@ -147,21 +148,26 @@ function NativeAudioSection() {
   // This is also where the remembered output choice takes effect on close.
   useEffect(() => () => { void releaseDevice() }, [])
 
-  const save = (next: { host?: string | null; device?: string | null; buffer?: number | null }) => {
-    const p = { host, device, buffer, ...next }
+  const save = (next: { host?: string | null; device?: string | null; buffer?: number | null; outFirst?: number | null }) => {
+    const p = { host, device, buffer, outFirst, ...next }
     setNativeOutputPrefs(p)
     setApplied('')
   }
   const pickHost = (h: string | null) => {
     // device names belong to a driver type — reset to its default
-    setHost(h); setDevice(null); save({ host: h, device: null })
+    setHost(h); setDevice(null); setOutFirst(0); save({ host: h, device: null, outFirst: 0 })
   }
-  const pickDevice = (d: string | null) => { setDevice(d); save({ device: d }) }
+  // a new device starts on outputs 1–2 (its pairs differ)
+  const pickDevice = (d: string | null) => { setDevice(d); setOutFirst(0); save({ device: d, outFirst: 0 }) }
+  const pickOutFirst = (f: number) => { setOutFirst(f); save({ outFirst: f }) }
+  // output pairs of the selected (or default) device: 1–2, 3–4, …
+  const outChannels = (devices.find(d => d.name === device) ?? devices.find(d => d.is_default))?.channels ?? 0
+  const outPairs = Array.from({ length: Math.floor(outChannels / 2) }, (_, i) => i * 2)
   const pickBuffer = (b: number | null) => { setBuffer(b); save({ buffer: b }) }
 
   const start = async () => {
     setErr('')
-    try { setStream(await nativeAudio.startTone(device, buffer ?? 128, hostName)) }
+    try { setStream(await nativeAudio.startTone(device, buffer ?? 128, hostName, outFirst)) }
     catch (e) { setErr(String(e).slice(0, 160)); setStream(null) }
   }
   const releaseDevice = async () => {
@@ -211,6 +217,15 @@ function NativeAudioSection() {
           {devices.map(d => <option key={d.name} value={d.name}>{d.name}{d.is_default ? ' ★' : ''}</option>)}
         </select>
       </div>
+      {outPairs.length > 1 && (
+        <div className="export-row">
+          <span className="export-label">Outputs</span>
+          <select value={outFirst} onChange={e => pickOutFirst(Number(e.target.value))}
+            data-info="Which pair of the interface's outputs carries the mix (e.g. 3–4 for a headphone output)">
+            {outPairs.map(f => <option key={f} value={f}>{f + 1}–{f + 2}</option>)}
+          </select>
+        </div>
+      )}
       <div className="export-row">
         <span className="export-label">Native buffer</span>
         <div className="seg">

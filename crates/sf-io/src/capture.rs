@@ -67,6 +67,10 @@ struct TapInner {
     /// Frame index of the next frame the writer will see.
     cursor: u64,
     bufs: Vec<Vec<f32>>,
+    /// Channels kept by the armed take: `first..first + bufs.len()` of the
+    /// stream's interleaved frames (a track recording "input 2" only stores
+    /// that one channel, whatever the stream carries).
+    first: usize,
     /// Writer reached `end` (or the arm was abandoned) — buffers are final.
     complete: bool,
     /// Anchor snapshot taken at arm time (None: no callback had run yet).
@@ -114,6 +118,7 @@ impl Tap {
                 end: None,
                 cursor: 0,
                 bufs: Vec::new(),
+                first: 0,
                 complete: true,
                 start_anchor: None,
                 start_frame_other: 0,
@@ -160,7 +165,15 @@ impl Tap {
     /// start frame. `other_frame` is any companion counter to snapshot at the
     /// same instant (the output stream's frame count for an input take).
     pub fn arm(&self, other_frame: u64) -> u64 {
-        self.arm_inner(other_frame, false)
+        self.arm_inner(other_frame, false, 0, self.channels)
+    }
+
+    /// [`arm`](Self::arm) keeping only stream channels `first..first+count`
+    /// (clamped to what the stream carries; at least one channel).
+    pub fn arm_channels(&self, other_frame: u64, first: usize, count: usize) -> u64 {
+        let first = first.min(self.channels - 1);
+        let count = count.clamp(1, self.channels - first);
+        self.arm_inner(other_frame, false, first, count)
     }
 
     /// Arm a tap whose producer is GATED — it pushes only while recording.
@@ -177,10 +190,10 @@ impl Tap {
     /// ring drained (i.e. before the gate is opened), which is exactly when
     /// this is called.
     pub fn arm_gated(&self, other_frame: u64) -> u64 {
-        self.arm_inner(other_frame, true)
+        self.arm_inner(other_frame, true, 0, self.channels)
     }
 
-    fn arm_inner(&self, other_frame: u64, resync_cursor: bool) -> u64 {
+    fn arm_inner(&self, other_frame: u64, resync_cursor: bool, first: usize, count: usize) -> u64 {
         let mut i = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         // read the counter UNDER the lock: the writer drains under the same
         // lock, so its cursor is ≤ total here → frames ≥ start are all still
@@ -193,7 +206,8 @@ impl Tap {
         i.start = start;
         i.end = None;
         i.complete = false;
-        i.bufs = (0..self.channels).map(|_| Vec::new()).collect();
+        i.bufs = (0..count).map(|_| Vec::new()).collect();
+        i.first = first;
         i.start_anchor = self.anchor();
         i.start_frame_other = other_frame;
         start
@@ -255,9 +269,9 @@ impl Tap {
         if lo < hi {
             let a = (lo - first) as usize;
             let b = (hi - first) as usize;
-            for c in 0..ch {
-                let buf = &mut i.bufs[c];
-                buf.extend(interleaved[a * ch..b * ch].iter().skip(c).step_by(ch));
+            let first = i.first;
+            for (k, buf) in i.bufs.iter_mut().enumerate() {
+                buf.extend(interleaved[a * ch..b * ch].iter().skip(first + k).step_by(ch));
             }
         }
         if i.cursor >= end {
@@ -482,6 +496,36 @@ mod tests {
         assert_eq!(take.channels[0], expect);
         assert_eq!(take.channels[1][3], 1.5);
         assert_eq!(tap.drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn take_keeps_only_the_selected_channels() {
+        // a 4-channel interface; the track records input 3 only
+        let tap = Tap::new(4, 48_000);
+        let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(4096);
+        let t2 = tap.clone();
+        let writer = std::thread::spawn(move || Tap::writer_loop(t2, cons));
+        tap.arm_channels(0, 2, 1);
+        for blk in 0..10 {
+            let frames: Vec<f32> = (0..32)
+                .flat_map(|i| {
+                    let f = (blk * 32 + i) as f32;
+                    [f, 100.0 + f, 200.0 + f, 300.0 + f]
+                })
+                .collect();
+            tap.push_ring(&mut prod, &frames);
+            tap.note_callback(32, 0);
+        }
+        let (take, _) = tap.disarm(Duration::from_secs(2)).unwrap();
+        drop(prod);
+        writer.join().unwrap();
+        assert_eq!(take.channels.len(), 1);
+        assert_eq!(take.channels[0].len(), 320);
+        assert_eq!(&take.channels[0][..3], &[200.0, 201.0, 202.0]);
+        // clamping: asking past the end keeps the last channel
+        tap.arm_channels(0, 9, 5);
+        let (t, _) = tap.disarm(Duration::from_millis(10)).unwrap();
+        assert_eq!(t.channels.len(), 1);
     }
 
     #[test]

@@ -1,7 +1,6 @@
 # Synthyy for Windows — Port Plan
 
-Status (2026-11-03): **W0, W1, W2 and W4 implemented, plus the core of W3
-(ASIO)** — compiled and unit-tested for Windows and macOS
+Status (2026-11-03): **W0–W5 implemented** — compiled and unit-tested for Windows and macOS
 targets, awaiting the real-hardware checks in `docs/WINDOWS.md` §3. See
 section 9 for what changed and what is still open.
 
@@ -394,6 +393,45 @@ a stubbed Tauri bridge running the desktop code paths:
   stack, and WebView2 page zoom is off (Tauri default), so Ctrl+wheel stays
   with the app.
 
+### Done (W3 — ASIO)
+
+- **Fixed: ASIO recording would break playback.** ASIO keeps one buffer set
+  per driver; cpal 0.16 tracks it per `Device` object, and sf-io looked the
+  device up separately for output and input. Opening the input re-created
+  the driver's buffers for input only and left the output callback reading
+  freed buffers. The manager now keeps one `AsioSession` whose Device both
+  directions share (cpal's `prepare_input_stream` then carries the output
+  buffers forward), and an input joining a session adopts its buffer size
+  (cpal sizes each stream's scratch buffer once at build time).
+- Output start on ASIO always re-initialises the driver (it closes the
+  recording input, which reopens on the next record). cpal ignores ASIO
+  reset requests, so this is also how control-panel changes and stalls
+  recover through the watchdog. Changing driver type closes the input too
+  (input and output must share a clock for latency compensation).
+- A different ASIO driver for input than output is refused with a clear
+  message instead of silently breaking the output.
+- **Channel routing for USB interfaces**: output pair (1–2, 3–4 …) in Audio
+  settings, remembered and kept across automatic restarts; per-track input
+  channels (`In 1+2`, `In 2` …). The input stream carries up to 8 channels to
+  the writer thread; each take stores only its track's channels.
+- Loopback latency measurement uses the input channel with the most energy.
+- Not possible: an "open ASIO control panel" button (asio-sys does not bind
+  `ASIOControlPanel`); documented.
+
+### Done (W5 — packaging)
+
+- Per-user NSIS installer (`installMode: currentUser`, explicit), no admin.
+- `scripts/release-windows.ps1`: local installer build on the Windows PC
+  (prerequisite checks, ASIO on by default, `-NoAsio` fallback).
+- Release names, artifact names, the macOS microphone prompt and docs say
+  Synthyy (were Synthtagram).
+- `docs/RELEASE.md` §4 rewritten for personal PCs: install, data location,
+  SmartScreen on unsigned builds, optional signing, ASIO licence.
+- CI fix found on the way: Windows test executables lacked the Common
+  Controls v6 manifest (tauri-build embeds it in the app binary only), so the
+  Tauri test binary could not start; build.rs now links the manifest into
+  every binary of the crate.
+
 ### Still open
 
 - Hardware checks in `docs/WINDOWS.md` §3 (all W1/W3 exit tests).
@@ -403,7 +441,5 @@ a stubbed Tauri bridge running the desktop code paths:
 - Recording takes still come back from Rust as base64 (`record_take_stop`,
   `master_capture_stop`); switching them to a raw response is the same
   pattern as `sample_put_raw`.
-- W3: an "open ASIO control panel" button (cpal does not expose it); choosing
-  an output pair other than 1–2 and input channels other than 1–2.
-- W5 (packaging: `currentUser` NSIS, offline WebView2,
-  "Synthtagram" release names), W6.
+- W6: the full hardware acceptance pass (`docs/WINDOWS.md` §3), including
+  the new ASIO recording checks (§3.6a) and an installer test on a clean PC.

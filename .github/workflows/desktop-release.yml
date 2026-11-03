@@ -80,7 +80,7 @@ jobs:
         with:
           args: --target universal-apple-darwin --bundles app,dmg
           tagName: ${{ github.ref_name }}
-          releaseName: "Synthtagram ${{ github.ref_name }}"
+          releaseName: "Synthyy ${{ github.ref_name }}"
           releaseBody: "See CHANGELOG / commits for details."
           releaseDraft: true
           prerelease: false
@@ -98,7 +98,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: synthtagram-macos-universal
+          name: synthyy-macos-universal
           path: |
             target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
@@ -155,13 +155,13 @@ jobs:
           # Steinberg SDK at build time; libclang is on the runner image)
           args: --bundles msi,nsis --features asio ${{ env.TAURI_SIGN_CONFIG != '' && format('--config {0}', env.TAURI_SIGN_CONFIG) || '' }}
           tagName: ${{ github.ref_name }}
-          releaseName: "Synthtagram ${{ github.ref_name }}"
+          releaseName: "Synthyy ${{ github.ref_name }}"
           releaseDraft: true
           prerelease: false
 
       - uses: actions/upload-artifact@v4
         with:
-          name: synthtagram-windows-x64
+          name: synthyy-windows-x64
           path: |
             target/release/bundle/msi/*.msi
             target/release/bundle/nsis/*.exe

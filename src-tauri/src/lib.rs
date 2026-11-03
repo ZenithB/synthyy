@@ -59,6 +59,8 @@ struct EngineState(Mutex<EngineInner>);
 struct DeviceDto {
     name: String,
     is_default: bool,
+    /// Channel count in the listed direction (0 = unknown).
+    channels: u16,
 }
 
 #[derive(Serialize)]
@@ -280,7 +282,7 @@ fn host_or_current(io: &AudioState, host: Option<String>) -> Option<String> {
 fn audio_devices(io: State<'_, AudioState>, host: Option<String>) -> Vec<DeviceDto> {
     sf_io::output_devices_on(host_or_current(&io, host).as_deref())
         .into_iter()
-        .map(|d| DeviceDto { name: d.name, is_default: d.is_default })
+        .map(|d| DeviceDto { name: d.name, is_default: d.is_default, channels: d.channels })
         .collect()
 }
 
@@ -293,10 +295,14 @@ fn audio_start_tone(
     host: Option<String>,
     device: Option<String>,
     buffer_frames: Option<u32>,
+    out_first: Option<u16>,
 ) -> Result<StreamDto, String> {
     let io = state.0.lock().map_err(|_| "audio state poisoned")?;
     if host.is_some() {
         io.set_host(host);
+    }
+    if let Some(f) = out_first {
+        io.set_output_channel(f);
     }
     let info = io.start_tone(device, buffer_frames, 440.0, 0.1)?;
     Ok(stream_dto(info))
@@ -341,9 +347,18 @@ fn engine_start(
     host: Option<String>,
     device: Option<String>,
     buffer_frames: Option<u32>,
+    out_first: Option<u16>,
 ) -> Result<StreamDto, String> {
-    if host.is_some() {
-        io.0.lock().map_err(|_| "audio state poisoned")?.set_host(host);
+    {
+        let g = io.0.lock().map_err(|_| "audio state poisoned")?;
+        if host.is_some() {
+            g.set_host(host);
+        }
+        // which device outputs carry the stereo mix (0 = 1–2); kept for
+        // automatic restarts
+        if let Some(f) = out_first {
+            g.set_output_channel(f);
+        }
     }
     do_engine_start(&io, &eng, device, buffer_frames)
 }
@@ -801,7 +816,7 @@ fn latency_dto(l: sf_io::LatencyInfo) -> LatencyDto {
 fn input_devices(io: State<'_, AudioState>, host: Option<String>) -> Vec<DeviceDto> {
     sf_io::input_devices_on(host_or_current(&io, host).as_deref())
         .into_iter()
-        .map(|d| DeviceDto { name: d.name, is_default: d.is_default })
+        .map(|d| DeviceDto { name: d.name, is_default: d.is_default, channels: d.channels })
         .collect()
 }
 
@@ -836,10 +851,21 @@ fn input_info(io: State<'_, AudioState>) -> Result<Option<StreamDto>, String> {
 
 /// Arm the input. Returns the take id and the playhead at arm time (the
 /// compensation delivered with the take is relative to THIS tick).
+/// `channel_first` / `channel_count` pick the device inputs the take keeps
+/// (0-based; default inputs 1–2) — a track's "Input 2" is (1, 1).
 #[tauri::command]
-fn record_take_start(io: State<'_, AudioState>, eng: State<'_, EngineState>) -> Result<TakeStartDto, String> {
+fn record_take_start(
+    io: State<'_, AudioState>,
+    eng: State<'_, EngineState>,
+    channel_first: Option<usize>,
+    channel_count: Option<usize>,
+) -> Result<TakeStartDto, String> {
     let e = eng.0.lock().map_err(|_| "engine state poisoned")?;
-    let take_id = io.0.lock().map_err(|_| "audio state poisoned")?.start_take()?;
+    let take_id = io
+        .0
+        .lock()
+        .map_err(|_| "audio state poisoned")?
+        .start_take_channels(channel_first.unwrap_or(0), channel_count.unwrap_or(2))?;
     let snap = e.ctl.as_ref().map(|c| c.snapshot()).unwrap_or_default();
     Ok(TakeStartDto { take_id, playhead_ticks: snap.playhead_ticks, playing: snap.playing })
 }

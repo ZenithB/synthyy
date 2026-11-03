@@ -17,7 +17,7 @@ import { engine } from '../audio/engine'
 import { meta } from '../state/doc'
 import { getSampleBuffer, importSampleFilesBulk, looksLikeAudio, startInputRecording, addRecordedPcm, InputRecording } from '../audio/samples'
 import { isDesktop, nativeRecord, b64ToF32 } from '../audio/native'
-import { trackInput } from '../state/inputs'
+import { trackInput, trackInputChannels, InputChannels } from '../state/inputs'
 import { DRUM_PACKS, packSampleId, ROLE_LABEL, RoleName } from '../audio/drumpacks'
 import { DEFAULT_PROJECT, demoProject, DRUM_KITS, InstPreset, MidiLoop, Progression, progressionClip, clipInKey } from '../packs'
 import { confirmDialog } from './dialogs'
@@ -318,13 +318,14 @@ type ActiveRec = { trackId: string; startTick: number; arr: boolean; sceneId: st
  *  anchored to the engine playhead at arm time — so `inputLatencySec` is
  *  reported as -1 to tell the caller "no further trimming". */
 let nativeInputDevice: string | null | undefined   // undefined = stream not opened yet
-async function startNativeInputRecording(deviceName: string): Promise<{ stop: () => Promise<InputRecording | null>; startTick: number | null } | null> {
+async function startNativeInputRecording(deviceName: string, ch: InputChannels | null): Promise<{ stop: () => Promise<InputRecording | null>; startTick: number | null } | null> {
   const want = deviceName || null
   if (nativeInputDevice === undefined || nativeInputDevice !== want || !(await nativeRecord.inputInfo().catch(() => null))) {
     await nativeRecord.inputStart(want, null)
     nativeInputDevice = want
   }
-  const t0 = await nativeRecord.takeStart()
+  // the track's chosen inputs (e.g. "In 2" = a mono take of input 2)
+  const t0 = await nativeRecord.takeStart(ch?.first ?? null, ch?.count ?? null)
   return {
     startTick: t0.playing ? t0.playhead_ticks : null,
     stop: async () => {
@@ -402,7 +403,7 @@ export async function toggleTrackRecord(trackId: string) {
   if (!t || t.get('kind') !== 'audio') { toast('Recording is for audio tracks'); return }
   try {
     const handle = isDesktop()
-      ? await startNativeInputRecording(trackInput(trackId))
+      ? await startNativeInputRecording(trackInput(trackId), trackInputChannels(trackId))
       : await startInputRecording(trackInput(trackId))
     if (!handle) { toast('Could not open the input'); return }
     // Anchor NOW — after the mic actually opened — so capture-offset 0 maps to

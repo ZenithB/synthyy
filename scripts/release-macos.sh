@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, sign, notarize and verify the Synthtagram macOS universal DMG.
+# Build, sign, notarize and verify the Synthyy macOS universal DMG.
 #
 #   scripts/release-macos.sh              signed + notarized (env vars required)
 #   scripts/release-macos.sh --unsigned   local unsigned build, skips all checks

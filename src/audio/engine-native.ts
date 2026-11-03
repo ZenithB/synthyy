@@ -166,14 +166,14 @@ class NativeEngine implements EngineApi {
     const p = nativeOutputPrefs()
     const bufferFrames = p.buffer ?? bufferForPrefs()
     try {
-      return await invoke<StreamStart>('engine_start', { host: p.host, device: p.device, bufferFrames })
+      return await invoke<StreamStart>('engine_start', { host: p.host, device: p.device, bufferFrames, outFirst: p.outFirst ?? 0 })
     } catch (e) {
       if (!p.host && !p.device) throw e
       // name the platform default driver explicitly: host null would mean
       // "keep the driver in use", which may be the one that just failed
       const hosts = await invoke<{ name: string; is_default: boolean }[]>('audio_hosts').catch(() => [])
       const host = hosts.find(h => h.is_default)?.name ?? null
-      const info = await invoke<StreamStart>('engine_start', { host, device: null, bufferFrames: bufferForPrefs() })
+      const info = await invoke<StreamStart>('engine_start', { host, device: null, bufferFrames: bufferForPrefs(), outFirst: 0 })
       const want = p.device ?? `the ${p.host} driver`
       toast(`Couldn’t open ${want} — using ${info.device}`)
       return info

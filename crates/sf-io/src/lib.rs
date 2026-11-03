@@ -46,6 +46,9 @@ use capture::{Anchor, ClockOrigin, Take, Tap, RING_SECONDS};
 pub struct DeviceInfo {
     pub name: String,
     pub is_default: bool,
+    /// Channel count of the device's default config in this direction
+    /// (0 if it could not be read) — drives the channel pickers.
+    pub channels: u16,
 }
 
 /// One audio driver type available in this build ("CoreAudio", "WASAPI",
@@ -226,7 +229,8 @@ pub fn output_devices_on(host: Option<&str>) -> Vec<DeviceInfo> {
         for d in devs {
             if let Ok(name) = d.name() {
                 let is_default = Some(&name) == default_name.as_ref();
-                out.push(DeviceInfo { name, is_default });
+                let channels = d.default_output_config().map(|c| c.channels()).unwrap_or(0);
+                out.push(DeviceInfo { name, is_default, channels });
             }
         }
     }
@@ -247,7 +251,8 @@ pub fn input_devices_on(host: Option<&str>) -> Vec<DeviceInfo> {
         for d in devs {
             if let Ok(name) = d.name() {
                 let is_default = Some(&name) == default_name.as_ref();
-                out.push(DeviceInfo { name, is_default });
+                let channels = d.default_input_config().map(|c| c.channels()).unwrap_or(0);
+                out.push(DeviceInfo { name, is_default, channels });
             }
         }
     }
@@ -314,27 +319,31 @@ pub struct LatencyInfo {
 }
 
 
-type EngineStart = Result<(StreamInfo, sf_engine::EngineControl, Arc<OutputHooks>), String>;
+/// Engine start reply: the stream, its control handle, the recording hooks,
+/// and whether the INPUT stream had to be closed to open it (see
+/// [`input_closes_for_output`]).
+type EngineStart = Result<(StreamInfo, sf_engine::EngineControl, Arc<OutputHooks>, bool), String>;
 
 enum Cmd {
     StartInput {
         host: Option<String>,
         device: Option<String>,
         buffer_frames: Option<u32>,
-        tap: Arc<Tap>,
         reply: mpsc::Sender<Result<(StreamInfo, Arc<Tap>), String>>,
     },
     StopInput,
     StartTone {
         host: Option<String>,
+        out_first: u16,
         device: Option<String>,
         buffer_frames: Option<u32>,
         freq_hz: f32,
         gain: f32,
-        reply: mpsc::Sender<Result<StreamInfo, String>>,
+        reply: mpsc::Sender<Result<(StreamInfo, bool), String>>,
     },
     StartEngine {
         host: Option<String>,
+        out_first: u16,
         device: Option<String>,
         buffer_frames: Option<u32>,
         reply: mpsc::Sender<EngineStart>,
@@ -567,6 +576,9 @@ pub struct IoHandle {
     /// Driver type used when a start call does not name one (None =
     /// platform default). Set by every start that does.
     host: Mutex<Option<String>>,
+    /// Device output channel (0-based) that receives the engine's LEFT
+    /// signal; right goes to the next one. 0 = outputs 1–2.
+    out_first: AtomicU32,
     watches: Mutex<Watches>,
 }
 
@@ -588,6 +600,7 @@ impl IoHandle {
             stats,
             rec: Mutex::new(RecState::default()),
             host: Mutex::new(None),
+            out_first: AtomicU32::new(0),
             watches: Mutex::new(Watches::default()),
         }
     }
@@ -603,6 +616,17 @@ impl IoHandle {
     /// Current driver type (None = platform default).
     pub fn host(&self) -> Option<String> {
         self.host.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Route the engine's stereo out to device outputs `first+1`/`first+2`
+    /// (0-based `first`; clamped to the device when a stream opens). Applies
+    /// to the next output stream start; automatic restarts keep it.
+    pub fn set_output_channel(&self, first: u16) {
+        self.out_first.store(first as u32, Ordering::Relaxed);
+    }
+
+    pub fn output_channel(&self) -> u16 {
+        self.out_first.load(Ordering::Relaxed) as u16
     }
 
     /// Choose the driver type for subsequent starts that don't name one
@@ -624,11 +648,23 @@ impl IoHandle {
         let host = self.host();
         let (reply, rx) = mpsc::channel();
         self.tx
-            .send(Cmd::StartTone { host, device, buffer_frames, freq_hz, gain, reply })
+            .send(Cmd::StartTone { host, out_first: self.output_channel(), device, buffer_frames, freq_hz, gain, reply })
             .map_err(|_| "sf-io manager thread is gone".to_string())?;
         // the tone replaces (and so ends) any engine stream
         self.watches().engine = None;
-        rx.recv().map_err(|_| "sf-io manager dropped the reply".to_string())?
+        let (info, input_closed) = rx.recv().map_err(|_| "sf-io manager dropped the reply".to_string())??;
+        if input_closed {
+            self.forget_input();
+        }
+        Ok(info)
+    }
+
+    /// The manager closed the input stream as a side effect (ASIO session
+    /// restart, or the driver type changed): drop our view of it. The next
+    /// record call reopens it (src/ui/actions.tsx checks `input_info`).
+    fn forget_input(&self) {
+        self.rec().input = None;
+        self.watches().input = None;
     }
 
     /// Open an output stream hosting a fresh [`sf_engine::Engine`] built at
@@ -647,10 +683,10 @@ impl IoHandle {
         self.watches().engine = None;
         let (reply, rx) = mpsc::channel();
         self.tx
-            .send(Cmd::StartEngine { host, device, buffer_frames, reply })
+            .send(Cmd::StartEngine { host, out_first: self.output_channel(), device, buffer_frames, reply })
             .map_err(|_| "sf-io manager thread is gone".to_string())?;
         let started = rx.recv().map_err(|_| "sf-io manager dropped the reply".to_string())?;
-        let (info, ctl, hooks) = match started {
+        let (info, ctl, hooks, input_closed) = match started {
             Ok(v) => v,
             Err(e) => {
                 // keep watching so check_health() asks for a retry later
@@ -658,6 +694,9 @@ impl IoHandle {
                 return Err(e);
             }
         };
+        if input_closed {
+            self.forget_input();
+        }
         self.rec().out = Some(hooks);
         self.watches().engine = Some(Watch::new(req, &info, Instant::now()));
         Ok((info, ctl))
@@ -697,15 +736,12 @@ impl IoHandle {
     ) -> Result<StreamInfo, String> {
         let host = self.host();
         let req = StreamRequest { host: host.clone(), device: device.clone(), buffer_frames };
-        let resolved = resolve_input(host.as_deref(), device.clone(), buffer_frames)?;
-        let tap = Tap::new(resolved.kept_channels, resolved.config.sample_rate.0);
         self.watches().input = None;
         let (reply, rx) = mpsc::channel();
         self.tx
-            .send(Cmd::StartInput { host, device, buffer_frames, tap, reply })
+            .send(Cmd::StartInput { host, device, buffer_frames, reply })
             .map_err(|_| "sf-io manager thread is gone".to_string())?;
         let (info, tap) = rx.recv().map_err(|_| "sf-io manager dropped the reply".to_string())??;
-        debug_assert_eq!(info.device, resolved.name);
         self.rec().input = Some(InputHooks { tap, info: info.clone() });
         self.watches().input = Some(Watch::new(req, &info, Instant::now()));
         Ok(info)
@@ -787,10 +823,17 @@ impl IoHandle {
 
     /// Arm the input: frames from NOW are kept. Returns the take id.
     pub fn start_take(&self) -> Result<u64, String> {
+        self.start_take_channels(0, 2)
+    }
+
+    /// Arm the input keeping device input channels `first..first+count`
+    /// (0-based; clamped to what the device has). `(0, 2)` = inputs 1–2,
+    /// `(1, 1)` = input 2 as a mono take.
+    pub fn start_take_channels(&self, first: usize, count: usize) -> Result<u64, String> {
         let mut r = self.rec();
         let out_frame = r.out.as_ref().map(|o| o.master.total_frames()).unwrap_or(0);
         let input = r.input.as_ref().ok_or("no input stream — call start_input first")?;
-        input.tap.arm(out_frame);
+        input.tap.arm_channels(out_frame, first, count);
         r.take_counter += 1;
         Ok(r.take_counter)
     }
@@ -885,12 +928,15 @@ impl IoHandle {
         let impulse_frame = out.impulse_frame.load(Ordering::Acquire);
         // template at the INPUT rate (streams may run at different rates)
         let template = capture::chirp(in_sr, 1.0);
-        let mono: Vec<f32> = if take.channels.len() == 1 {
-            take.channels[0].clone()
-        } else {
-            let n = take.channels[0].len();
-            (0..n).map(|i| take.channels.iter().map(|c| c[i]).sum::<f32>() / take.channels.len() as f32).collect()
-        };
+        // the loopback can land on any input: correlate the channel with the
+        // most energy (averaging up to 8 channels would bury the chirp)
+        let energy = |c: &Vec<f32>| c.iter().map(|v| v * v).sum::<f32>();
+        let mono: Vec<f32> = take
+            .channels
+            .iter()
+            .max_by(|a, b| energy(a).total_cmp(&energy(b)))
+            .cloned()
+            .unwrap_or_default();
         let pos = capture::find_delay(&mono, &template, 0.3)
             .ok_or("no correlation peak — is the output reaching the input (loopback cable / mic)?")?;
         // instants on the shared clock axis
@@ -1001,33 +1047,105 @@ fn timestamp_latency_ms(
     (ms.is_finite() && (-50.0..=500.0).contains(&ms)).then_some(ms.max(0.0))
 }
 
+// ---- ASIO session (docs/WINDOWS_PORT_PLAN.md W3) ----
+//
+// ASIO has ONE buffer set per driver: every ASIOCreateBuffers call frees the
+// previous one. cpal 0.16 tracks that set per `Device` OBJECT, and each
+// enumeration makes a new object. Opening output and input from two
+// separately-enumerated objects therefore re-created the buffers for input
+// only, leaving the output callback reading freed buffers (silence at best,
+// a crash at worst). cpal's own design expects both directions on one object:
+// `prepare_input_stream` carries the existing output buffers into the new
+// set. So the manager keeps one `AsioSession` and hands its Device to both.
+//
+// cpal also sizes each stream's scratch buffer once at build time, so every
+// stream on the session must share one buffer size. And cpal ignores the
+// driver's reset requests (sent after control-panel changes), so a restart
+// must re-initialise the driver. Hence the rules below.
+
+/// The ASIO driver in use and the Device every stream on it must share.
+struct AsioSession {
+    driver: String,
+    device: cpal::Device,
+    /// Buffer request all streams on this session were built with.
+    buffer: Option<u32>,
+}
+
+/// Opening an OUTPUT stream: must the open input stream close first?
+/// - On ASIO, yes: output always starts a fresh session (driver re-init —
+///   also how a driver reset or a new buffer size is picked up), which
+///   frees the input's buffers.
+/// - When the driver type changes, yes: input and output must share a
+///   clock for latency compensation (it reopens on the next record).
+fn input_closes_for_output(out_host_asio: bool, input_open: bool, input_host: Option<&str>, out_host: Option<&str>) -> bool {
+    input_open && (out_host_asio || input_host != out_host)
+}
+
+/// How an ASIO INPUT stream gets its device.
+#[derive(Debug, PartialEq)]
+enum AsioInput {
+    /// Join the running output's session with its buffer size.
+    Join { buffer: Option<u32> },
+    /// No output running: start a new session for the input.
+    Fresh,
+}
+
+/// `session` = (driver, buffer) of the running ASIO session, if any.
+fn plan_asio_input(session: Option<(&str, Option<u32>)>, output_open: bool, want: Option<&str>) -> Result<AsioInput, String> {
+    match session {
+        Some((driver, buffer)) if output_open => {
+            if want.is_none() || want == Some(driver) {
+                Ok(AsioInput::Join { buffer })
+            } else {
+                Err(format!(
+                    "ASIO runs one driver at a time: choose an input on \"{driver}\" (the output's interface), or use WASAPI"
+                ))
+            }
+        }
+        _ => Ok(AsioInput::Fresh),
+    }
+}
+
 fn manager_loop(rx: mpsc::Receiver<Cmd>, stats: Arc<Stats>, clock: Arc<ClockOrigin>) {
-    // The Stream lives HERE, on this thread, for its whole life. It is never
-    // read — it's held purely so Drop (assigning None / a replacement) stops
-    // the hardware stream — hence the underscore name.
+    // The Streams live HERE, on this thread, for their whole life. They are
+    // never read — they're held purely so Drop (assigning None / a
+    // replacement) stops the hardware stream — hence the underscore names.
     let mut _stream: Option<cpal::Stream> = None;
     let mut _input: Option<cpal::Stream> = None;
+    let mut input_host: Option<String> = None;
+    let mut asio: Option<AsioSession> = None;
     while let Ok(cmd) = rx.recv() {
         match cmd {
-            Cmd::StartInput { host, device, buffer_frames, tap, reply } => {
+            Cmd::StartInput { host, device, buffer_frames, reply } => {
                 _input = None;
-                match open_input_stream(host.as_deref(), device, buffer_frames, tap, &stats, &clock) {
+                if _stream.is_none() {
+                    asio = None; // input-only session is being replaced
+                }
+                let res = open_input_stream(host.as_deref(), device, buffer_frames, &stats, &clock, &mut asio, _stream.is_some());
+                match res {
                     Ok((s, info, tap)) => {
                         let _ = reply.send(Ok((info, tap)));
                         _input = Some(s);
+                        input_host = host;
                     }
                     Err(e) => {
                         let _ = reply.send(Err(e));
                     }
                 }
             }
-            Cmd::StopInput => _input = None,
-            Cmd::StartTone { host, device, buffer_frames, freq_hz, gain, reply } => {
-                _stream = None; // drop any previous stream first
-                let res = open_tone_stream(host.as_deref(), device, buffer_frames, freq_hz, gain, &stats);
+            Cmd::StopInput => {
+                _input = None;
+                if _stream.is_none() {
+                    asio = None; // last stream gone: release the driver
+                }
+            }
+            Cmd::StartTone { host, out_first, device, buffer_frames, freq_hz, gain, reply } => {
+                let input_closed = prepare_output_open(&mut _stream, &mut _input, &mut asio, input_host.as_deref(), host.as_deref());
+                let req = OutputRequest { host: host.as_deref(), device, buffer_frames, out_first };
+                let res = open_tone_stream(req, freq_hz, gain, &stats, &mut asio);
                 match res {
                     Ok((s, info)) => {
-                        let _ = reply.send(Ok(info));
+                        let _ = reply.send(Ok((info, input_closed)));
                         _stream = Some(s);
                     }
                     Err(e) => {
@@ -1035,12 +1153,13 @@ fn manager_loop(rx: mpsc::Receiver<Cmd>, stats: Arc<Stats>, clock: Arc<ClockOrig
                     }
                 }
             }
-            Cmd::StartEngine { host, device, buffer_frames, reply } => {
-                _stream = None;
-                let res = open_engine_stream(host.as_deref(), device, buffer_frames, &stats, &clock);
+            Cmd::StartEngine { host, out_first, device, buffer_frames, reply } => {
+                let input_closed = prepare_output_open(&mut _stream, &mut _input, &mut asio, input_host.as_deref(), host.as_deref());
+                let req = OutputRequest { host: host.as_deref(), device, buffer_frames, out_first };
+                let res = open_engine_stream(req, &stats, &clock, &mut asio);
                 match res {
                     Ok((s, info, ctl, hooks)) => {
-                        let _ = reply.send(Ok((info, ctl, hooks)));
+                        let _ = reply.send(Ok((info, ctl, hooks, input_closed)));
                         _stream = Some(s);
                     }
                     Err(e) => {
@@ -1048,10 +1167,39 @@ fn manager_loop(rx: mpsc::Receiver<Cmd>, stats: Arc<Stats>, clock: Arc<ClockOrig
                     }
                 }
             }
-            Cmd::Stop => _stream = None,
+            Cmd::Stop => {
+                _stream = None;
+                if _input.is_none() {
+                    asio = None;
+                }
+            }
             Cmd::Quit => break,
         }
     }
+}
+
+/// Before opening an output stream: drop the old one, close the input if
+/// required ([`input_closes_for_output`]) and, on ASIO, end the session so
+/// the driver is re-initialised. Order matters: streams before the session,
+/// so the last driver handle goes and asio-sys really tears the driver down.
+/// Returns whether the input was closed.
+fn prepare_output_open(
+    stream: &mut Option<cpal::Stream>,
+    input: &mut Option<cpal::Stream>,
+    asio: &mut Option<AsioSession>,
+    input_host: Option<&str>,
+    out_host: Option<&str>,
+) -> bool {
+    *stream = None;
+    let out_asio = out_host.is_some_and(is_asio);
+    let close = input_closes_for_output(out_asio, input.is_some(), input_host, out_host);
+    if close {
+        *input = None;
+    }
+    if out_asio || input.is_none() {
+        *asio = None;
+    }
+    close
 }
 
 fn reset_stats(stats: &Stats) {
@@ -1088,6 +1236,21 @@ fn note_stream_error(lost: &AtomicBool, xruns: &AtomicU32, e: cpal::StreamError)
     }
 }
 
+/// What an output-stream open asks for.
+struct OutputRequest<'a> {
+    host: Option<&'a str>,
+    device: Option<String>,
+    buffer_frames: Option<u32>,
+    /// Requested first output channel (0-based); clamped by [`first_pair`].
+    out_first: u16,
+}
+
+/// Clamp a requested first output channel so the stereo pair fits the
+/// device (mono devices: 0, the downmix).
+fn first_pair(requested: u16, channels: u16) -> usize {
+    if channels < 2 { 0 } else { (requested as usize).min(channels as usize - 2) }
+}
+
 /// A resolved output device + the config it will be opened with.
 struct OutputTarget {
     device: cpal::Device,
@@ -1096,6 +1259,8 @@ struct OutputTarget {
     config: cpal::StreamConfig,
     format: SampleFormat,
     wasapi: bool,
+    /// First device channel of the stereo pair (already clamped).
+    first: usize,
 }
 
 impl OutputTarget {
@@ -1133,15 +1298,12 @@ fn apply_buffer_request(config: &mut cpal::StreamConfig, supported: &cpal::Suppo
 /// Resolve the output device and its NATIVE config (channel count, rate,
 /// sample format — WASAPI shared mode and ASIO accept nothing else),
 /// honoring `buffer_frames` when the backend supports it.
-fn open_output(
-    host: Option<&str>,
-    device_name: Option<String>,
-    buffer_frames: Option<u32>,
-) -> Result<OutputTarget, String> {
-    let host = host_named(host)?;
+fn open_output(req: &OutputRequest<'_>, asio: &mut Option<AsioSession>) -> Result<OutputTarget, String> {
+    let (device_name, buffer_frames) = (&req.device, req.buffer_frames);
+    let host = host_named(req.host)?;
     let wasapi = is_wasapi(&host);
     let host_name = host.id().name().to_string();
-    let device = match &device_name {
+    let device = match device_name {
         None => host
             .default_output_device()
             .ok_or("no default output device")?,
@@ -1164,7 +1326,16 @@ fn open_output(
         buffer_size: cpal::BufferSize::Default,
     };
     apply_buffer_request(&mut config, default_cfg.buffer_size(), buffer_frames);
-    Ok(OutputTarget { device, name, host_name, config, format: default_cfg.sample_format(), wasapi })
+    if is_asio(&host_name) {
+        // the session every later stream on this driver must share
+        *asio = Some(AsioSession {
+            driver: name.clone(),
+            device: device.clone(),
+            buffer: achieved_frames(false, buffer_frames, &config),
+        });
+    }
+    let first = first_pair(req.out_first, channels);
+    Ok(OutputTarget { device, name, host_name, config, format: default_cfg.sample_format(), wasapi, first })
 }
 
 /// Largest chunk the output callback renders at once. Bigger callbacks
@@ -1264,12 +1435,13 @@ fn clip(x: f32) -> f32 {
     x.clamp(-1.0, CLIP_HI)
 }
 
-/// Stereo planar → `ch`-channel interleaved device samples. Channels 1–2
-/// get L/R, any further channels silence, a mono device the L+R average.
-/// Clipped first (see [`CLIP_HI`]): integer formats (ASIO is usually
-/// i32/i24) would otherwise wrap instead of clip.
+/// Stereo planar → `ch`-channel interleaved device samples. Channels
+/// `first`/`first+1` get L/R (0 = outputs 1–2; the caller clamps it with
+/// [`first_pair`]), every other channel silence, a mono device the L+R
+/// average. Clipped first (see [`CLIP_HI`]): integer formats (ASIO is
+/// usually i32/i24) would otherwise wrap instead of clip.
 #[inline]
-fn write_frames<T: Sample + FromSample<f32>>(out: &mut [T], ch: usize, l: &[f32], r: &[f32]) {
+fn write_frames<T: Sample + FromSample<f32>>(out: &mut [T], ch: usize, first: usize, l: &[f32], r: &[f32]) {
     if ch == 1 {
         for (o, (a, b)) in out.iter_mut().zip(l.iter().zip(r)) {
             *o = T::from_sample(clip((a + b) * 0.5));
@@ -1277,11 +1449,11 @@ fn write_frames<T: Sample + FromSample<f32>>(out: &mut [T], ch: usize, l: &[f32]
         return;
     }
     for (i, frame) in out.chunks_exact_mut(ch).enumerate() {
-        frame[0] = T::from_sample(clip(l[i]));
-        frame[1] = T::from_sample(clip(r[i]));
-        for s in &mut frame[2..] {
+        for s in frame.iter_mut() {
             *s = T::EQUILIBRIUM;
         }
+        frame[first] = T::from_sample(clip(l[i]));
+        frame[first + 1] = T::from_sample(clip(r[i]));
     }
 }
 
@@ -1333,6 +1505,7 @@ where
     S: OutputSource,
 {
     let ch = t.config.channels as usize;
+    let first = t.first;
     // planar scratch, pre-allocated: the callback renders into these and
     // writes the device format — no allocation on the audio thread.
     let mut l = vec![0.0f32; SCRATCH_FRAMES];
@@ -1358,7 +1531,7 @@ where
                 while done < total {
                     let n = (total - done).min(SCRATCH_FRAMES);
                     source.render(&mut l[..n], &mut r[..n]);
-                    write_frames(&mut out[done * ch..(done + n) * ch], ch, &l[..n], &r[..n]);
+                    write_frames(&mut out[done * ch..(done + n) * ch], ch, first, &l[..n], &r[..n]);
                     done += n;
                 }
                 for s in &mut out[total * ch..] {
@@ -1373,14 +1546,14 @@ where
 }
 
 fn open_tone_stream(
-    host: Option<&str>,
-    device_name: Option<String>,
-    buffer_frames: Option<u32>,
+    req: OutputRequest<'_>,
     freq_hz: f32,
     gain: f32,
     stats: &Arc<Stats>,
+    asio: &mut Option<AsioSession>,
 ) -> Result<(cpal::Stream, StreamInfo), String> {
-    let t = open_output(host, device_name, buffer_frames)?;
+    let buffer_frames = req.buffer_frames;
+    let t = open_output(&req, asio)?;
     reset_stats(stats);
     let source = ToneSource {
         tone: sf_dsp::TestTone::new(freq_hz, t.config.sample_rate.0 as f32, gain),
@@ -1392,13 +1565,13 @@ fn open_tone_stream(
 }
 
 fn open_engine_stream(
-    host: Option<&str>,
-    device_name: Option<String>,
-    buffer_frames: Option<u32>,
+    req: OutputRequest<'_>,
     stats: &Arc<Stats>,
     clock: &Arc<ClockOrigin>,
+    asio: &mut Option<AsioSession>,
 ) -> Result<(cpal::Stream, StreamInfo, sf_engine::EngineControl, Arc<OutputHooks>), String> {
-    let t = open_output(host, device_name, buffer_frames)?;
+    let buffer_frames = req.buffer_frames;
+    let t = open_output(&req, asio)?;
     let info = t.info(buffer_frames);
     let sample_rate = t.config.sample_rate.0;
 
@@ -1437,9 +1610,15 @@ fn open_engine_stream(
     Ok((stream, info, ctl, hooks))
 }
 
+/// Device input channels carried from the callback to the writer thread.
+/// Each take keeps only the channels its track asked for
+/// ([`IoHandle::start_take_channels`]); 8 covers common USB interfaces and
+/// keeps the ring small (8 ch × 2 s ≈ 3 MB at 48 kHz).
+const MAX_INPUT_CHANNELS: usize = 8;
+
 /// A resolved input device + its native config. Rate, channel count and
 /// sample format are the device's; only the buffer size is negotiable. The
-/// first `kept_channels` (≤ 2) are recorded.
+/// first `kept_channels` (≤ [`MAX_INPUT_CHANNELS`]) reach the tap.
 struct InputTarget {
     device: cpal::Device,
     name: String,
@@ -1448,19 +1627,41 @@ struct InputTarget {
     format: SampleFormat,
     kept_channels: usize,
     wasapi: bool,
+    /// Buffer request actually used (an ASIO input adopts the session's).
+    requested: Option<u32>,
 }
 
 fn resolve_input(
     host: Option<&str>,
     device_name: Option<String>,
-    buffer_frames: Option<u32>,
+    mut buffer_frames: Option<u32>,
+    asio: &mut Option<AsioSession>,
+    output_open: bool,
 ) -> Result<InputTarget, String> {
     let host = host_named(host)?;
     let wasapi = is_wasapi(&host);
     let host_name = host.id().name().to_string();
-    let device = match &device_name {
-        None => host.default_input_device().ok_or("no default input device")?,
-        Some(want) => host
+    let asio_plan = if is_asio(&host_name) {
+        Some(plan_asio_input(
+            asio.as_ref().map(|s| (s.driver.as_str(), s.buffer)),
+            output_open,
+            device_name.as_deref(),
+        )?)
+    } else {
+        None
+    };
+    let joined = match (&asio_plan, asio.as_ref()) {
+        (Some(AsioInput::Join { buffer }), Some(s)) => {
+            // same Device object as the output, same buffer size
+            buffer_frames = *buffer;
+            Some(s.device.clone())
+        }
+        _ => None,
+    };
+    let device = match (joined, &device_name) {
+        (Some(d), _) => d,
+        (None, None) => host.default_input_device().ok_or("no default input device")?,
+        (None, Some(want)) => host
             .input_devices()
             .map_err(|e| e.to_string())?
             .find(|d| d.name().map(|n| &n == want).unwrap_or(false))
@@ -1473,8 +1674,24 @@ fn resolve_input(
         return Err(format!("input device \"{name}\" reports 0 channels"));
     }
     apply_buffer_request(&mut config, default_cfg.buffer_size(), buffer_frames);
-    let kept_channels = (config.channels as usize).min(2);
-    Ok(InputTarget { device, name, host_name, config, format: default_cfg.sample_format(), kept_channels, wasapi })
+    if matches!(asio_plan, Some(AsioInput::Fresh)) {
+        *asio = Some(AsioSession {
+            driver: name.clone(),
+            device: device.clone(),
+            buffer: achieved_frames(false, buffer_frames, &config),
+        });
+    }
+    let kept_channels = (config.channels as usize).min(MAX_INPUT_CHANNELS);
+    Ok(InputTarget {
+        device,
+        name,
+        host_name,
+        config,
+        format: default_cfg.sample_format(),
+        kept_channels,
+        wasapi,
+        requested: buffer_frames,
+    })
 }
 
 /// Open the input stream: callback → ring (no alloc) → writer thread → `tap`.
@@ -1482,12 +1699,13 @@ fn open_input_stream(
     host: Option<&str>,
     device_name: Option<String>,
     buffer_frames: Option<u32>,
-    tap: Arc<Tap>,
     stats: &Arc<Stats>,
     clock: &Arc<ClockOrigin>,
+    asio: &mut Option<AsioSession>,
+    output_open: bool,
 ) -> Result<(cpal::Stream, StreamInfo, Arc<Tap>), String> {
-    let t = resolve_input(host, device_name, buffer_frames)?;
-    debug_assert_eq!(t.kept_channels, tap.channels());
+    let t = resolve_input(host, device_name, buffer_frames, asio, output_open)?;
+    let tap = Tap::new(t.kept_channels, t.config.sample_rate.0);
     let (prod, cons) =
         rtrb::RingBuffer::<f32>::new(t.config.sample_rate.0 as usize * t.kept_channels * RING_SECONDS);
     {
@@ -1514,7 +1732,7 @@ fn open_input_stream(
             device: t.name.clone(),
             host: t.host_name.clone(),
             sample_rate: t.config.sample_rate.0,
-            buffer_frames: achieved_frames(t.wasapi, buffer_frames, &t.config),
+            buffer_frames: achieved_frames(t.wasapi, t.requested, &t.config),
             channels: t.config.channels,
             sample_format: t.format.to_string(),
         },
@@ -1617,14 +1835,26 @@ mod port_tests {
         let l = [0.5f32, -0.25];
         let r = [0.1f32, 0.2];
         let mut out = [9.0f32; 2 * 4];
-        write_frames(&mut out, 4, &l, &r);
+        write_frames(&mut out, 4, 0, &l, &r);
         assert_eq!(out, [0.5, 0.1, 0.0, 0.0, -0.25, 0.2, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn output_pair_routes_to_chosen_channels() {
+        // 6-channel interface, headphones on outputs 3–4
+        let mut out = [9.0f32; 6];
+        write_frames(&mut out, 6, first_pair(2, 6), &[0.5], &[-0.5]);
+        assert_eq!(out, [0.0, 0.0, 0.5, -0.5, 0.0, 0.0]);
+        // requests past the end clamp to the last pair; mono ignores it
+        assert_eq!(first_pair(7, 6), 4);
+        assert_eq!(first_pair(3, 2), 0);
+        assert_eq!(first_pair(5, 1), 0);
     }
 
     #[test]
     fn mono_device_gets_downmix() {
         let mut out = [9.0f32; 2];
-        write_frames(&mut out, 1, &[1.0, 0.0], &[0.0, -0.5]);
+        write_frames(&mut out, 1, 0, &[1.0, 0.0], &[0.0, -0.5]);
         assert_eq!(out, [0.5, -0.25]);
     }
 
@@ -1632,20 +1862,20 @@ mod port_tests {
     fn integer_formats_clip_instead_of_wrapping() {
         // the calibration chirp is mixed post-limiter and can exceed 1.0
         let mut out = [0i32; 4];
-        write_frames(&mut out, 2, &[1.5, -2.0], &[0.5, 0.0]);
+        write_frames(&mut out, 2, 0, &[1.5, -2.0], &[0.5, 0.0]);
         // positive ceiling is CLIP_HI (one 24-bit step below full scale)
         assert_eq!(out[0], i32::MAX - 255);
         assert_eq!(out[2], i32::MIN);
         assert!((out[1] as f64 / i32::MAX as f64 - 0.5).abs() < 1e-6);
         // exactly 0 dBFS and beyond must land on the 24-bit extremes
         let mut out24 = [cpal::I24::EQUILIBRIUM; 4];
-        write_frames(&mut out24, 2, &[1.0, 3.0], &[-1.0, -3.0]);
+        write_frames(&mut out24, 2, 0, &[1.0, 3.0], &[-1.0, -3.0]);
         assert_eq!(out24[0].inner(), (1 << 23) - 1);
         assert_eq!(out24[1].inner(), -(1 << 23));
         assert_eq!(out24[2].inner(), (1 << 23) - 1);
         assert_eq!(out24[3].inner(), -(1 << 23));
         let mut out16 = [0u16; 2];
-        write_frames(&mut out16, 2, &[0.0], &[0.0]);
+        write_frames(&mut out16, 2, 0, &[0.0], &[0.0]);
         assert_eq!(out16[0], u16::EQUILIBRIUM, "unsigned silence is mid-scale");
     }
 
@@ -1687,6 +1917,39 @@ mod port_tests {
         assert_eq!(w.assess(11, true, None, t0 + Duration::from_millis(2000)), None);
         // …re-reported later so a failed restart is retried
         assert!(w.assess(11, true, None, t0 + Duration::from_millis(6500)).is_some());
+    }
+
+    #[test]
+    fn asio_input_joins_the_output_session() {
+        // output running on the Focusrite at 128: input joins with 128
+        assert_eq!(
+            plan_asio_input(Some(("Focusrite USB ASIO", Some(128))), true, None),
+            Ok(AsioInput::Join { buffer: Some(128) })
+        );
+        assert_eq!(
+            plan_asio_input(Some(("Focusrite USB ASIO", None)), true, Some("Focusrite USB ASIO")),
+            Ok(AsioInput::Join { buffer: None })
+        );
+        // a different ASIO driver while output runs: refused, never re-buffered
+        let err = plan_asio_input(Some(("Focusrite USB ASIO", Some(128))), true, Some("MOTU ASIO")).unwrap_err();
+        assert!(err.contains("one driver at a time"), "{err}");
+        // no output running: the input starts its own session
+        assert_eq!(plan_asio_input(None, false, Some("MOTU ASIO")), Ok(AsioInput::Fresh));
+        assert_eq!(plan_asio_input(Some(("MOTU ASIO", None)), false, Some("Other")), Ok(AsioInput::Fresh));
+    }
+
+    #[test]
+    fn output_open_closes_input_only_when_it_must() {
+        // ASIO output always re-initialises the driver
+        assert!(input_closes_for_output(true, true, Some("ASIO"), Some("ASIO")));
+        // driver type changed
+        assert!(input_closes_for_output(false, true, Some("ASIO"), Some("WASAPI")));
+        assert!(input_closes_for_output(false, true, None, Some("WASAPI")));
+        // same non-ASIO driver: input untouched (WASAPI/CoreAudio streams are independent)
+        assert!(!input_closes_for_output(false, true, Some("WASAPI"), Some("WASAPI")));
+        assert!(!input_closes_for_output(false, true, None, None));
+        // nothing to close
+        assert!(!input_closes_for_output(true, false, None, Some("ASIO")));
     }
 
     #[test]

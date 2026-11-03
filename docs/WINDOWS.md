@@ -73,8 +73,24 @@ In the app: **Audio settings (top bar) → native section**:
 - **Native buffer**: honoured by ASIO and CoreAudio. On WASAPI, Windows sets
   the period itself (about 10 ms) — the stats line shows what is really
   happening.
+- **Outputs** (shown for interfaces with more than two outputs): which
+  pair carries the mix — e.g. 3–4 for a headphone output. Remembered.
 - **Apply to playback** re-opens the engine with these settings (closing the
   dialog does the same).
+
+On an audio track's header, next to the input device there is now a small
+**input channel** picker for multi-input interfaces: `In 1+2` (stereo pair)
+or a single input such as `In 2` (records a mono take of just that input).
+Each track remembers its own choice, so a vocal track can use input 1 and a
+guitar track input 2.
+
+**ASIO and recording**: ASIO runs one driver at a time, so the recording
+input must be on the same interface as the output (the app says so if not).
+Starting playback output on ASIO re-initialises the driver, which closes the
+recording input; it reopens automatically on the next record.
+
+To build an installer instead of running from source, see `docs/RELEASE.md`
+§4 (`scripts\release-windows.ps1`).
 
 The stats line shows the callback size actually seen, xruns, deadline misses,
 peak load and — on WASAPI — the audio thread priority. It should read
@@ -160,6 +176,21 @@ it is the input for the W2 decision on multi-core rendering.
    Windows sound settings while the app is open: a toast should report the
    change and audio follows it.
 
+### 3.6a ASIO recording (W3)
+
+With the ASIO build, driver set to ASIO and your interface selected:
+
+1. Play the demo song, then on an audio track pick the interface and
+   `In 1`, arm and record a few bars while playing into input 1. Playback
+   must continue without a dropout or crash while recording starts and stops.
+2. Repeat with `In 2` and with `In 1+2`; the clip should be mono for single
+   inputs and stereo for the pair, with the signal on the right input.
+3. Set **Outputs** to 3–4 (if your interface has them) and confirm the mix
+   moves to that output pair.
+4. Change the buffer size in the interface's own control panel while the
+   app plays: within a few seconds a toast reports the restart and audio
+   resumes at the new size (the stats line shows it).
+
 ### 3.6 Latency measurement
 
 Audio settings → Native input → pick the interface input → connect an output
@@ -225,6 +256,7 @@ Run the app (section 2) and check:
 | Device fails to open, "device in use" | Another app holds it in **exclusive mode**. Sound settings → device → Properties → Advanced → untick "Allow applications to take exclusive control", or close the other app. |
 | ASIO: not listed as a driver | Built without `--features asio`. |
 | ASIO: no devices listed | The interface's ASIO driver is not installed, or another ASIO app (DAW) has it open — most ASIO drivers allow one app at a time. |
-| ASIO: input and output on different interfaces | Not possible with ASIO (one driver at a time). Use WASAPI, or an aggregate driver from the interface vendor. |
+| ASIO: "runs one driver at a time" when recording | The track's input is on a different interface than the output. Pick the output's interface for the input, or use WASAPI. |
+| ASIO: no "open control panel" button | The ASIO library used here does not expose it; use the interface maker's settings app (Focusrite Control, MOTU, RME TotalMix, etc.). |
 | Crackles on WASAPI under load | Check the stats line says real-time (MMCSS); set Windows power mode to Best performance; try the Stable latency preset. |
 | Recording is silent | Microphone privacy setting (see 3.3). |

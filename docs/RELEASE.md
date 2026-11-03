@@ -1,4 +1,4 @@
-# Releasing Synthtagram Desktop
+# Releasing Synthyy Desktop
 
 End-to-end runbook for shipping the Tauri 2 desktop app. The web app is
 untouched by any of this — it keeps deploying to Vercel on every push to `main`.
@@ -38,7 +38,7 @@ ever hit docs, the script and the workflow.
 4. Notarization credentials — pick one:
    - **Apple ID + app-specific password** (simplest): appleid.apple.com →
      Sign-In and Security → App-Specific Passwords → generate one named
-     `synthtagram-notary`. This is `APPLE_PASSWORD`; `APPLE_ID` is the account
+     `synthyy-notary`. This is `APPLE_PASSWORD`; `APPLE_ID` is the account
      email; `APPLE_TEAM_ID` from step 1.
    - **App Store Connect API key** (better for CI): appstoreconnect.apple.com →
      Users and Access → Integrations → Team Keys → generate with *Developer*
@@ -79,7 +79,7 @@ The script:
    (must say `accepted … source=Notarized Developer ID`),
    `xcrun stapler validate` on app and dmg, and prints the paths.
 
-Output: `target/universal-apple-darwin/release/bundle/{macos/Synthyy.app,dmg/Synthtagram_<ver>_universal.dmg}`.
+Output: `target/universal-apple-darwin/release/bundle/{macos/Synthyy.app,dmg/Synthyy_<ver>_universal.dmg}`.
 
 Unsigned local build (no Apple account needed):
 
@@ -144,12 +144,45 @@ Then watch Actions → *desktop-release*, download the DMG from the draft
 release, open it on a clean Mac (no developer tools) and confirm it launches
 without a Gatekeeper warning, then click *Publish release*.
 
-## 4. Windows notes
+## 4. Windows
 
-- The Windows job produces `Synthtagram_<ver>_x64_en-US.msi` (WiX) and
-  `Synthtagram_<ver>_x64-setup.exe` (NSIS). WebView2 is installed by the
-  bootstrapper if missing (`webviewInstallMode: downloadBootstrapper`).
-- Signing: `bundle.windows.certificateThumbprint` is committed as `null`. When
+Synthyy on Windows targets **personal PCs** (no managed/corporate machines),
+so the defaults favour a simple, admin-free install.
+
+### Build an installer on your Windows PC
+
+One-time setup is in `docs/WINDOWS.md` §1. Then, from the repo folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\release-windows.ps1
+```
+
+It checks the prerequisites, builds with ASIO support (`-NoAsio` for a
+WASAPI-only build without LLVM) and prints the installer path:
+`target\release\bundle\nsis\Synthyy_<ver>_x64-setup.exe`.
+
+### What the installer does
+
+- **Per-user install** (`bundle.windows.nsis.installMode: currentUser`): no
+  administrator prompt; installs inside your user profile (not Program
+  Files) and adds a Start-menu entry and an uninstaller (Settings → Apps).
+- **WebView2** is part of Windows 11 and kept current on Windows 10; if it is
+  missing the installer fetches it (`webviewInstallMode:
+  downloadBootstrapper` — needs internet only in that case).
+- Project data, autosave and settings live in the WebView2 profile under
+  `%LOCALAPPDATA%\app.synthyy.desktop`; exports go to the Downloads folder.
+- **Unsigned**: the first launch shows SmartScreen's "Windows protected your
+  PC" — click **More info → Run anyway**. Signing is optional (below).
+
+### CI release
+
+The tag workflow's Windows job builds `Synthyy_<ver>_x64-setup.exe` (NSIS,
+the one to use) and `Synthyy_<ver>_x64_en-US.msi` (WiX; per-machine, needs
+admin) with `--features asio`, and attaches both to the draft release.
+
+### Signing (optional)
+
+- `bundle.windows.certificateThumbprint` is committed as `null`. When
   `WINDOWS_CERTIFICATE` is present the job imports the `.pfx` into the
   runner's `CurrentUser\My` store and passes the resulting thumbprint through
   `tauri build --config '{"bundle":{"windows":{"certificateThumbprint":"…"}}}'`,
@@ -159,11 +192,14 @@ without a Gatekeeper warning, then click *Publish release*.
   cert has reputation; an EV cert (hardware token / cloud HSM) avoids that. For
   an HSM-backed cert use `bundle.windows.signCommand` (e.g. AzureSignTool)
   instead of a thumbprint.
-- Windows installers are built with `--features asio` (ASIO driver support;
-  `asio-sys` downloads the Steinberg SDK at build time, libclang is on the
-  runner). Check Steinberg's licence terms before distributing beyond
-  personal use.
-- Hardware verification (WASAPI + ASIO) is the checklist in `docs/WINDOWS.md`.
+
+### ASIO licence
+
+`asio-sys` downloads the Steinberg ASIO SDK at build time (it is never
+committed). Fine for personal use; check Steinberg's licence terms before
+distributing ASIO builds to others.
+
+Hardware verification (WASAPI + ASIO) is the checklist in `docs/WINDOWS.md`.
 
 ## 5. Auto-update (deliberately not enabled yet)
 
@@ -173,8 +209,8 @@ private key must be kept out of the repo. Since there is nowhere safe to keep
 that key right now, the plugin is not added. To enable it later:
 
 1. Generate the keypair **outside the repo**:
-   `npx tauri signer generate -w ~/.tauri/synthtagram.key` (set a password).
-   Back up `~/.tauri/synthtagram.key` in a password manager — losing it means
+   `npx tauri signer generate -w ~/.tauri/synthyy.key` (set a password).
+   Back up `~/.tauri/synthyy.key` in a password manager — losing it means
    existing installs can never update again.
 2. Add the plugin: `cargo add tauri-plugin-updater --package synthyy`,
    `npm i @tauri-apps/plugin-updater`, register it in `src-tauri/src/lib.rs`
@@ -183,7 +219,7 @@ that key right now, the plugin is not added. To enable it later:
 3. In `tauri.conf.json` add
    ```json
    "plugins": { "updater": {
-     "pubkey": "<contents of ~/.tauri/synthtagram.key.pub>",
+     "pubkey": "<contents of ~/.tauri/synthyy.key.pub>",
      "endpoints": ["https://github.com/<owner>/<repo>/releases/latest/download/latest.json"]
    }},
    "bundle": { "createUpdaterArtifacts": true }
@@ -205,5 +241,6 @@ that automatically.
       `source=Notarized Developer ID`
 - [ ] DMG opens on a clean Mac without warnings; mic prompt shows the
       `NSMicrophoneUsageDescription` text when recording is armed
-- [ ] Windows installer runs on a clean VM
+- [ ] Windows installer (`*-setup.exe`) installs without an admin prompt and
+      launches on a clean Windows 10/11 PC (SmartScreen: More info → Run anyway)
 - [ ] Draft release published
