@@ -1,0 +1,63 @@
+# CI: build + test the desktop app on both shipping platforms on every push
+# and pull request (docs/WINDOWS_PORT_PLAN.md W0). The release workflow
+# (desktop-release.yml) only runs on tags and runs no tests; this one is the
+# gate that keeps the Mac build working while the Windows port lands.
+#
+# Audio hardware is not available on hosted runners: device enumeration tests
+# accept an empty list, and the real-device checks live in docs/WINDOWS.md.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: npm ci
+
+      # tsc --noEmit + vite build; also produces dist/, which the Tauri crate
+      # embeds at compile time
+      - run: npm run build
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+      # ASIO (Windows only): asio-sys downloads the Steinberg SDK at build
+      # time and runs bindgen, which needs libclang (preinstalled on the
+      # windows-latest image). Checked here so a broken ASIO build is caught
+      # before a release tag.
+      - name: Clippy with ASIO
+        if: runner.os == 'Windows'
+        run: cargo clippy -p sf-io -p synthyy --features sf-io/asio,synthyy/asio -- -D warnings

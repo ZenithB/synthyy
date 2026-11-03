@@ -22,3 +22,8 @@ sf-engine.workspace = true
 sf-project.workspace = true
 sf-render.workspace = true
 base64.workspace = true
+
+[features]
+default = []
+# Forward to sf-io: adds ASIO as a driver type on Windows (docs/WINDOWS.md).
+asio = ["sf-io/asio"]

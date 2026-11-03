@@ -159,8 +159,11 @@ without a Gatekeeper warning, then click *Publish release*.
   cert has reputation; an EV cert (hardware token / cloud HSM) avoids that. For
   an HSM-backed cert use `bundle.windows.signCommand` (e.g. AzureSignTool)
   instead of a thumbprint.
-- The audio leg (WASAPI) has not been tested on real hardware yet —
-  see `docs/RUST_REWRITE_PLAN.md`.
+- Windows installers are built with `--features asio` (ASIO driver support;
+  `asio-sys` downloads the Steinberg SDK at build time, libclang is on the
+  runner). Check Steinberg's licence terms before distributing beyond
+  personal use.
+- Hardware verification (WASAPI + ASIO) is the checklist in `docs/WINDOWS.md`.
 
 ## 5. Auto-update (deliberately not enabled yet)
 

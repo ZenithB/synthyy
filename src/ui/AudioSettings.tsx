@@ -6,7 +6,10 @@
 import React, { useEffect, useState } from 'react'
 import { getAudioPrefs, setAudioPrefs, AudioPrefs, LatencyMode } from '../audio/prefs'
 import { engine } from '../audio/engine'
-import { isDesktop, nativeAudio, nativeRecord, NativeDevice, NativeStats, NativeStreamInfo, NativeLatency } from '../audio/native'
+import {
+  isDesktop, nativeAudio, nativeRecord, nativeOutputPrefs, setNativeOutputPrefs,
+  NativeDevice, NativeHost, NativeStats, NativeStreamInfo, NativeLatency,
+} from '../audio/native'
 // desktop-only panel: talks to the concrete native engine (stream ownership)
 import { nativeEngine } from '../audio/engine-native'
 import { setUI, useUI } from '../state/store'
@@ -103,74 +106,155 @@ export function AudioSettings() {
   )
 }
 
-// ---- desktop-only: direct hardware access via the Rust core (Phase 0) ----
-// Device picker + real buffer sizes + a test tone, with live callback stats
-// (xruns, deadline misses, peak load) straight from the audio callback.
+// ---- desktop-only: direct hardware access via the Rust core ----
+// Driver type (CoreAudio / WASAPI / ASIO) + output device + buffer for the
+// native engine, remembered per machine (nativeOutputPrefs). Applied when the
+// user presses Apply or closes the dialog (the engine stream is re-opened and
+// the project re-pushed). Live callback stats come straight from the audio
+// callback: the callback size actually seen, xruns, deadline misses, load and
+// the audio thread's priority (MMCSS on Windows).
 const NATIVE_BUFFERS = [64, 128, 256, 512]
 
 function NativeAudioSection() {
+  const saved = nativeOutputPrefs()
+  const [hosts, setHosts] = useState<NativeHost[]>([])
+  const [host, setHost] = useState<string | null>(saved.host)
   const [devices, setDevices] = useState<NativeDevice[]>([])
-  const [device, setDevice] = useState<string | null>(null)
-  const [buffer, setBuffer] = useState(128)
+  const [device, setDevice] = useState<string | null>(saved.device)
+  const [buffer, setBuffer] = useState<number | null>(saved.buffer)
   const [stream, setStream] = useState<NativeStreamInfo | null>(null)
   const [stats, setStats] = useState<NativeStats | null>(null)
   const [err, setErr] = useState('')
+  const [applied, setApplied] = useState('')
 
-  useEffect(() => { nativeAudio.devices().then(setDevices).catch(() => setDevices([])) }, [])
+  // the driver actually meant by "null" (platform default)
+  const hostName = host ?? hosts.find(h => h.is_default)?.name ?? null
+  const isWasapi = hostName?.toUpperCase() === 'WASAPI'
+  const isAsio = hostName?.toUpperCase() === 'ASIO'
+  const hasAsio = hosts.some(h => h.name.toUpperCase() === 'ASIO')
+
+  useEffect(() => { nativeAudio.hosts().then(setHosts).catch(() => setHosts([])) }, [])
   useEffect(() => {
-    if (!stream) return
+    if (!hostName) return
+    nativeAudio.devices(hostName).then(setDevices).catch(() => setDevices([]))
+  }, [hostName])
+  useEffect(() => {
     const t = setInterval(() => nativeAudio.stats().then(setStats).catch(() => {}), 500)
     return () => clearInterval(t)
-  }, [stream])
-  // leaving the dialog unmounts the section — stop any running tone
+  }, [])
   // Releasing the device must hand the stream BACK to the engine — the test
   // tone replaced it, so skipping this leaves the app silent until restart.
+  // This is also where the remembered output choice takes effect on close.
   useEffect(() => () => { void releaseDevice() }, [])
+
+  const save = (next: { host?: string | null; device?: string | null; buffer?: number | null }) => {
+    const p = { host, device, buffer, ...next }
+    setNativeOutputPrefs(p)
+    setApplied('')
+  }
+  const pickHost = (h: string | null) => {
+    // device names belong to a driver type — reset to its default
+    setHost(h); setDevice(null); save({ host: h, device: null })
+  }
+  const pickDevice = (d: string | null) => { setDevice(d); save({ device: d }) }
+  const pickBuffer = (b: number | null) => { setBuffer(b); save({ buffer: b }) }
 
   const start = async () => {
     setErr('')
-    try { setStream(await nativeAudio.startTone(device, buffer)) }
-    catch (e) { setErr(String(e).slice(0, 120)); setStream(null) }
+    try { setStream(await nativeAudio.startTone(device, buffer ?? 128, hostName)) }
+    catch (e) { setErr(String(e).slice(0, 160)); setStream(null) }
   }
   const releaseDevice = async () => {
     try { await nativeAudio.stop() } catch { /* ok */ }
     try { await nativeEngine.restartStream() } catch { /* engine not started yet */ }
   }
-  const stop = () => { void releaseDevice(); setStream(null); setStats(null) }
+  const stop = () => { void releaseDevice(); setStream(null) }
+  const apply = async () => {
+    setErr('')
+    setStream(null)
+    try {
+      await nativeAudio.stop().catch(() => {})
+      await nativeEngine.restartStream()
+      setApplied('Playback now uses these settings.')
+    } catch (e) { setErr(String(e).slice(0, 160)) }
+  }
+
+  const rate = stream?.sample_rate ?? nativeEngine.sampleRate
+  const ms = (frames: number) => rate ? ` (${(frames / rate * 1000).toFixed(1)} ms)` : ''
+  const seen = stats?.max_callback_frames
+    ? (stats.min_callback_frames && stats.min_callback_frames !== stats.max_callback_frames
+        ? `${stats.min_callback_frames}–${stats.max_callback_frames} frames${ms(stats.max_callback_frames)}`
+        : `${stats.max_callback_frames} frames${ms(stats.max_callback_frames)}`)
+    : null
+  const prio = stats?.rt_priority === 'mmcss' ? 'real-time (MMCSS)'
+    : stats?.rt_priority === 'mmcss-failed' ? 'NORMAL — MMCSS registration failed'
+    : null
 
   return (
     <>
       <div className="export-divider" />
+      {hosts.length > 1 && (
+        <div className="export-row">
+          <span className="export-label">Driver</span>
+          <div className="seg">
+            {hosts.map(h => (
+              <button key={h.name} className={hostName === h.name ? 'on' : ''}
+                onClick={() => pickHost(h.name)}>{h.name}</button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="export-row">
         <span className="export-label">Native output</span>
-        <select value={device ?? ''} onChange={e => setDevice(e.target.value || null)}>
-          <option value="">System default</option>
+        <select value={device ?? ''} onChange={e => pickDevice(e.target.value || null)}>
+          <option value="">{isAsio ? 'First ASIO driver' : 'System default'}</option>
           {devices.map(d => <option key={d.name} value={d.name}>{d.name}{d.is_default ? ' ★' : ''}</option>)}
         </select>
       </div>
       <div className="export-row">
         <span className="export-label">Native buffer</span>
         <div className="seg">
+          <button className={buffer === null ? 'on' : ''} onClick={() => pickBuffer(null)}
+            data-info="Follow the Latency setting above (Low 128 · Balanced 256 · Stable 512)">Auto</button>
           {NATIVE_BUFFERS.map(b => (
-            <button key={b} className={buffer === b ? 'on' : ''} onClick={() => setBuffer(b)}>{b}</button>
+            <button key={b} className={buffer === b ? 'on' : ''} onClick={() => pickBuffer(b)}>{b}</button>
           ))}
         </div>
       </div>
+      {isWasapi && (
+        <div className="export-hint">
+          WASAPI: Windows sets the buffer itself (usually about 10 ms), so the buffer choice has little effect.
+          {hasAsio ? ' Choose ASIO for low latency with an audio interface.' : ' This build has no ASIO support (see docs/WINDOWS.md).'}
+        </div>
+      )}
+      {isAsio && (
+        <div className="export-hint">
+          ASIO: the recording input uses the same driver. A buffer size the driver doesn’t accept falls back to the size set in its control panel.
+        </div>
+      )}
       <div className="export-actions">
+        <button className="export-btn" onClick={apply}>Apply to playback</button>
         {!stream
-          ? <button className="export-btn" onClick={start}><Icon name="bolt" size={13} /> Play test tone</button>
+          ? <button className="export-btn ghost" onClick={start}><Icon name="bolt" size={13} /> Play test tone</button>
           : <button className="export-btn ghost" onClick={stop}>Stop tone</button>}
       </div>
       {stream && (
         <div className="export-hint">
-          {stream.device} @ {(stream.sample_rate / 1000).toFixed(1)} kHz
-          {stream.buffer_frames ? ` · ${stream.buffer_frames} frames (${(stream.buffer_frames / stream.sample_rate * 1000).toFixed(1)} ms)` : ' · default buffer'}
-          {stats && <> · xruns <b>{stats.xruns}</b> · deadline misses <b>{stats.over_budget}</b> · peak load <b>{Math.round(stats.peak_load * 100)}%</b></>}
+          Test tone: {stream.device}{stream.host ? ` [${stream.host}]` : ''} @ {(stream.sample_rate / 1000).toFixed(1)} kHz
+          {stream.channels ? ` · ${stream.channels} ch ${stream.sample_format ?? ''}` : ''}
         </div>
       )}
+      {stats && stats.callbacks > 0 && (
+        <div className="export-hint">
+          {seen && <>Callback <b>{seen}</b> · </>}
+          xruns <b>{stats.xruns}</b> · deadline misses <b>{stats.over_budget}</b> · peak load <b>{Math.round(stats.peak_load * 100)}%</b>
+          {prio && <> · priority <b style={stats.rt_priority === 'mmcss-failed' ? { color: '#e66' } : undefined}>{prio}</b></>}
+        </div>
+      )}
+      {applied && <div className="export-hint">{applied}</div>}
       {err && <div className="export-hint" style={{ color: '#e66' }}>{err}</div>}
-      <div className="export-hint">Direct hardware access via the Rust audio core — the settings above only affect the browser engine.</div>
-      <NativeInputSection />
+      <div className="export-hint">Direct hardware access via the Rust audio core. Output settings take effect when you press Apply or close this dialog; the settings above only affect the browser engine.</div>
+      <NativeInputSection host={hostName} />
     </>
   )
 }
@@ -182,7 +266,7 @@ function NativeAudioSection() {
 // from an output to an input, or let the speakers reach the mic.
 const INPUT_KEY = 'sf-native-input'
 
-function NativeInputSection() {
+function NativeInputSection({ host }: { host: string | null }) {
   const [devices, setDevices] = useState<NativeDevice[]>([])
   const [device, setDevice] = useState<string | null>(() => localStorage.getItem(INPUT_KEY) || null)
   const [stream, setStream] = useState<NativeStreamInfo | null>(null)
@@ -191,8 +275,11 @@ function NativeInputSection() {
   const [msg, setMsg] = useState('')
 
   const refreshLat = () => nativeRecord.latencyGet().then(setLat).catch(() => {})
+  // inputs list follows the output's driver type (ASIO runs both on one driver)
   useEffect(() => {
-    nativeRecord.inputDevices().then(setDevices).catch(() => setDevices([]))
+    nativeRecord.inputDevices(host).then(setDevices).catch(() => setDevices([]))
+  }, [host])
+  useEffect(() => {
     nativeRecord.inputInfo().then(setStream).catch(() => {})
     void refreshLat()
   }, [])
@@ -238,8 +325,9 @@ function NativeInputSection() {
       </div>
       {stream && (
         <div className="export-hint">
-          {stream.device} @ {(stream.sample_rate / 1000).toFixed(1)} kHz
-          {stream.buffer_frames ? ` · ${stream.buffer_frames} frames` : ' · default buffer'}
+          {stream.device}{stream.host ? ` [${stream.host}]` : ''} @ {(stream.sample_rate / 1000).toFixed(1)} kHz
+          {stream.channels ? ` · ${stream.channels} ch` : ''}
+          {stream.buffer_frames ? ` · ${stream.buffer_frames} frames` : ' · driver-managed buffer'}
         </div>
       )}
       {lat && (

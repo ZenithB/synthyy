@@ -1,6 +1,14 @@
 # Synthyy for Windows — Port Plan
 
-Status: proposal (2026-11-03). Nothing in this plan has been implemented yet.
+Status (2026-11-03): **W0 and W1 implemented, plus the core of W3 (ASIO)
+and the MMCSS part of W2** — compiled and unit-tested for Windows and macOS
+targets, awaiting the real-hardware checks in `docs/WINDOWS.md` §3. See
+section 9 for what changed and what is still open.
+
+Scope decisions (from the owner): keep macOS supported; personal PCs only
+(no managed/corporate machines); must work with onboard sound and USB audio
+interfaces; include ASIO for low latency; a Windows PC is available for
+testing.
 
 ## 1. Summary
 
@@ -290,15 +298,60 @@ W0 → W1 (3.1 and 3.2 first: one is a hard failure, the other is the biggest
 performance risk) → W2 → W4 → W5 → W3 → W6. ASIO comes after a shippable
 WASAPI build because WASAPI covers every device; ASIO only improves latency.
 
-## 8. Open questions (answers change scope)
+## 8. Answered questions
 
-1. Should the Mac build stay supported? (Assumed yes — it costs nothing.)
-2. Target machines: MCEC-managed PCs (admin rights, Intune/AppLocker, proxy) or
-   personal machines? Affects W5 signing and install mode.
-3. Which audio hardware must work: Dante Virtual Soundcard, a specific USB
-   interface, laptop speakers only? Decides whether ASIO (W3) is required.
-4. Is live playing/monitoring needed (needs ASIO), or mostly arranging,
-   mixing and export (WASAPI is enough)?
-5. Any Windows on ARM laptops (Snapdragon) in the team?
-6. Is a Windows PC available for development and testing? CI can build and
-   run unit tests; audio exit tests cannot run in CI.
+1. Mac stays supported — one codebase, CI on both.
+2. Personal PCs only — no Intune/AppLocker/proxy constraints; per-user
+   install and unsigned builds are acceptable (SmartScreen "More info → Run
+   anyway" on first launch).
+3. Hardware: onboard sound and USB interfaces (WASAPI), ASIO for low latency.
+4. Live playing/monitoring matters → ASIO is in scope now, not later.
+5. A Windows PC is available for the hardware checks.
+
+## 9. Implementation log
+
+### Done (W0, W1, W3 core, W2 MMCSS)
+
+- **CI** (`.github/workflows/ci.yml`): Windows + macOS on every push — web
+  build, `cargo clippy -D warnings`, `cargo test --workspace`, and an ASIO
+  clippy pass on Windows. The release workflow builds Windows installers with
+  `--features asio`.
+- **Driver types** (`sf-io`): `hosts()`, `IoHandle::set_host`, device lists
+  per driver; ASIO behind the `asio` cargo feature (`sf-io`, `synthyy`).
+- **3.1** streams open at the device's native channel count; stereo goes to
+  outputs 1–2, mono devices get a downmix; inputs keep channels 1–2.
+- **3.2** WASAPI callback threads register with MMCSS "Pro Audio"; result
+  shown in the UI and the `tone` probe. ASIO threads are left alone.
+- **3.3** WASAPI never claims a fixed buffer; actual callback sizes are
+  measured and used for the latency estimate and the UI.
+- **3.4** watchdog (`IoHandle::check_health`) + Tauri supervisor thread:
+  device loss, stalled callbacks and default-device changes restart the
+  engine (same device → driver default → platform default driver), re-push
+  the project, and toast the user; failed restarts are retried.
+- **3.5** every cpal sample format handled (f32/f64/i32/i24/i16/u16).
+- **3.6** exact-digital-silence detection on the input → privacy hint toast.
+- FTZ/DAZ on x86 moved to `stmxcsr`/`ldmxcsr` (the intrinsics are deprecated
+  and fail clippy on x86 targets — this would have broken Windows CI and
+  Intel Mac builds).
+
+### Found during implementation
+
+- **The engine ignored the output picker.** `engine-native.ts` always opened
+  the system default device; the Audio-settings picker only routed the test
+  tone. Fine on a Mac (switch the system output), a blocker on Windows where
+  a USB interface is rarely the default and ASIO has no default. The choice
+  (driver, device, buffer) is now remembered per machine and used by the
+  engine, with a fallback to the system default if the device is missing.
+- **24-bit clipping bug.** The sample converter maps +1.0 to 8 388 608 for
+  24-bit — one past the maximum — which wraps to full-scale negative when
+  packed: a loud click on every 0 dBFS peak through a 24-bit ASIO driver.
+  Output is now clipped one 24-bit step below 1.0 (unit-tested).
+
+### Still open
+
+- Hardware checks in `docs/WINDOWS.md` §3 (all W1/W3 exit tests).
+- W2: power-throttling opt-out, soak numbers per PC, multi-core decision.
+- W3: an "open ASIO control panel" button (cpal does not expose it); choosing
+  an output pair other than 1–2 and input channels other than 1–2.
+- W4 (WebView2 UI pass), W5 (packaging: `currentUser` NSIS, offline WebView2,
+  "Synthtagram" release names), W6.

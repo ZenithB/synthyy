@@ -78,13 +78,16 @@ fn main() {
     }
 
     let io = sf_io::IoHandle::spawn();
+    // SF_HOST = driver type (WASAPI / ASIO / CoreAudio), SF_DEVICE = output
+    // device by exact name; both optional (docs/WINDOWS.md)
+    io.set_host(std::env::var("SF_HOST").ok());
     let (info, mut ctl) = io
-        .start_engine(None, Some(buffer_frames))
+        .start_engine(std::env::var("SF_DEVICE").ok(), Some(buffer_frames))
         .unwrap_or_else(|e| panic!("start engine stream: {e}"));
     println!(
         "soak: project={path} minutes={minutes} requested_frames={buffer_frames} load={load}\n\
-         stream: device={:?} sample_rate={} buffer_frames={:?}",
-        info.device, info.sample_rate, info.buffer_frames
+         stream: device={:?} host={} sample_rate={} channels={} format={} buffer_frames={:?}",
+        info.device, info.host, info.sample_rate, info.channels, info.sample_format, info.buffer_frames
     );
 
     ctl.load_project(&project);

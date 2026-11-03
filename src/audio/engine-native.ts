@@ -35,6 +35,7 @@ import {
 import { getAudioPrefs } from './prefs'
 import { getSampleBuffer, onSampleReady } from './samples'
 import { setUI, toast, ui } from '../state/store'
+import { nativeOutputPrefs } from './native'
 import type { EngineApi, EngineMode, PerfStats } from './engine-api'
 
 type NativeSnapshot = {
@@ -54,7 +55,15 @@ type NativeSnapshot = {
   peak_load: number
   max_callback_us: number
   budget_us: number
+  /** automatic device-change notice (stream restarted by the Rust
+   *  supervisor after an unplug / driver reset / default change) */
+  notice_seq?: number
+  notice?: string | null
+  /** input stream delivered only exact digital silence for 2 s */
+  input_silent?: boolean
 }
+
+type StreamStart = { device: string; sample_rate: number; buffer_frames: number | null }
 
 type ProjectLoadResult = {
   tracks: string[]
@@ -161,11 +170,32 @@ class NativeEngine implements EngineApi {
     return this.startPromise
   }
 
+  /** Open the engine stream on the remembered driver/device/buffer
+   *  (Audio settings → Native output). If that device is gone (USB
+   *  interface unplugged since last session) fall back to the system default
+   *  on the platform driver rather than starting silent. */
+  private async openStream(): Promise<StreamStart> {
+    const p = nativeOutputPrefs()
+    const bufferFrames = p.buffer ?? bufferForPrefs()
+    try {
+      return await invoke<StreamStart>('engine_start', { host: p.host, device: p.device, bufferFrames })
+    } catch (e) {
+      if (!p.host && !p.device) throw e
+      // name the platform default driver explicitly: host null would mean
+      // "keep the driver in use", which may be the one that just failed
+      const hosts = await invoke<{ name: string; is_default: boolean }[]>('audio_hosts').catch(() => [])
+      const host = hosts.find(h => h.is_default)?.name ?? null
+      const info = await invoke<StreamStart>('engine_start', { host, device: null, bufferFrames: bufferForPrefs() })
+      const want = p.device ?? `the ${p.host} driver`
+      toast(`Couldn’t open ${want} — using ${info.device}`)
+      return info
+    }
+  }
+
   private async doStart() {
-    const info = await invoke<{ device: string; sample_rate: number; buffer_frames: number | null }>(
-      'engine_start',
-      { device: null, bufferFrames: bufferForPrefs() },
-    )
+    // the platform default driver is only the fallback — openStream sets the
+    // remembered one (host null there = keep whatever is in use)
+    const info = await this.openStream()
     this.sampleRate = info.sample_rate
     this.bufferFrames = info.buffer_frames ?? bufferForPrefs()
     // late IndexedDB decodes land through the ready callback (engine-tone's
@@ -189,10 +219,7 @@ class NativeEngine implements EngineApi {
    */
   async restartStream() {
     if (!this.started) return
-    const info = await invoke<{ device: string; sample_rate: number; buffer_frames: number | null }>(
-      'engine_start',
-      { device: null, bufferFrames: bufferForPrefs() },
-    )
+    const info = await this.openStream()
     this.sampleRate = info.sample_rate
     this.bufferFrames = info.buffer_frames ?? bufferForPrefs()
     await this.pushProject()
@@ -443,6 +470,7 @@ class NativeEngine implements EngineApi {
     try {
       const s = await invoke<NativeSnapshot>('engine_snapshot')
       const playingChanged = this.playFlag !== s.playing
+      this.showNotices(s)
       this.snap = s
       this.snapAt = performance.now()
       this.playFlag = s.playing
@@ -459,6 +487,28 @@ class NativeEngine implements EngineApi {
       if (playingChanged) this.emit()
     } catch { /* engine restarting — keep the last snapshot */ }
     this.pollInFlight = false
+  }
+
+  private noticeSeq = 0
+  private silentWarned = false
+
+  /** Toast what the native side did on its own (device unplugged → stream
+   *  restarted elsewhere) and the no-input-signal hint. */
+  private showNotices(s: NativeSnapshot) {
+    const seq = s.notice_seq ?? 0
+    if (seq > this.noticeSeq) {
+      this.noticeSeq = seq
+      if (s.notice) toast(s.notice)
+    }
+    if (s.input_silent && !this.silentWarned) {
+      this.silentWarned = true
+      const win = /Windows/i.test(navigator.userAgent)
+      toast(win
+        ? 'No signal from the recording input. Check Windows Settings > Privacy & security > Microphone > “Let desktop apps access your microphone”.'
+        : 'No signal from the recording input — check the input device and its gain.')
+    } else if (!s.input_silent) {
+      this.silentWarned = false
+    }
   }
 
   private resolvePending(nowTicks: number) {

@@ -39,6 +39,10 @@ struct EngineInner {
     gr_index: Vec<GrEntry>,
     playing: bool,
     arr_mode: bool,
+    /// Last automatic audio-device event (supervisor restart), for a UI
+    /// toast; `notice_seq` bumps each time the message changes.
+    notice_seq: u64,
+    notice: Option<String>,
 }
 
 /// Rebuild the current graph from the stored project + sample bank (the
@@ -57,11 +61,41 @@ struct DeviceDto {
     is_default: bool,
 }
 
+#[derive(Serialize)]
+struct HostDto {
+    name: String,
+    is_default: bool,
+}
+
 #[derive(Serialize, Clone)]
 struct StreamDto {
     device: String,
     sample_rate: u32,
+    /// None = backend-managed (always on WASAPI); see StatsDto callback frames.
     buffer_frames: Option<u32>,
+    /// Driver type (cpal host name: CoreAudio / WASAPI / ASIO).
+    host: String,
+    channels: u16,
+    sample_format: String,
+}
+
+fn stream_dto(info: sf_io::StreamInfo) -> StreamDto {
+    StreamDto {
+        device: info.device,
+        sample_rate: info.sample_rate,
+        buffer_frames: info.buffer_frames,
+        host: info.host,
+        channels: info.channels,
+        sample_format: info.sample_format,
+    }
+}
+
+fn rt_label(code: u8) -> &'static str {
+    match code {
+        sf_io::RT_MMCSS_OK => "mmcss",
+        sf_io::RT_MMCSS_FAILED => "mmcss-failed",
+        _ => "host",
+    }
 }
 
 #[derive(Serialize)]
@@ -73,6 +107,12 @@ struct StatsDto {
     max_callback_us: f64,
     budget_us: f64,
     peak_load: f64,
+    /// Callback sizes actually seen (0 = none yet) — the honest buffer size.
+    min_callback_frames: u32,
+    max_callback_frames: u32,
+    /// "host" (driver-managed) | "mmcss" | "mmcss-failed".
+    rt_priority: &'static str,
+    device_lost: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -124,6 +164,12 @@ struct SnapshotDto {
     peak_load: f64,
     max_callback_us: f64,
     budget_us: f64,
+    /// Automatic device-change notice (see EngineInner::notice).
+    notice_seq: u64,
+    notice: Option<String>,
+    /// The input stream has delivered only exact digital silence for 2 s
+    /// (Windows microphone privacy) — the UI shows a hint.
+    input_silent: bool,
 }
 
 fn track_id(t: &TrackJSON) -> String {
@@ -175,11 +221,7 @@ fn do_engine_start(
     }
     e.playing = false;
     e.ctl = Some(ctl);
-    Ok(StreamDto {
-        device: info.device,
-        sample_rate: info.sample_rate,
-        buffer_frames: info.buffer_frames,
-    })
+    Ok(stream_dto(info))
 }
 
 fn do_project_load(eng: &EngineState, project: Value) -> Result<ProjectLoadDto, String> {
@@ -221,10 +263,22 @@ fn do_clip_launch(eng: &EngineState, track_id: &str, scene_id: &str) -> Result<(
 
 // ---- Phase 0 commands (unchanged surface) ----
 
-/// List selectable output devices.
+/// Driver types available in this build (CoreAudio; WASAPI, plus ASIO when
+/// built with the `asio` feature).
 #[tauri::command]
-fn audio_devices() -> Vec<DeviceDto> {
-    sf_io::output_devices()
+fn audio_hosts() -> Vec<HostDto> {
+    sf_io::hosts().into_iter().map(|h| HostDto { name: h.name, is_default: h.is_default }).collect()
+}
+
+/// Resolve an optional driver-type argument: None = the one in use.
+fn host_or_current(io: &AudioState, host: Option<String>) -> Option<String> {
+    host.or_else(|| io.0.lock().ok().and_then(|g| g.host()))
+}
+
+/// List selectable output devices on `host` (None = the driver type in use).
+#[tauri::command]
+fn audio_devices(io: State<'_, AudioState>, host: Option<String>) -> Vec<DeviceDto> {
+    sf_io::output_devices_on(host_or_current(&io, host).as_deref())
         .into_iter()
         .map(|d| DeviceDto { name: d.name, is_default: d.is_default })
         .collect()
@@ -236,16 +290,16 @@ fn audio_devices() -> Vec<DeviceDto> {
 #[tauri::command]
 fn audio_start_tone(
     state: State<'_, AudioState>,
+    host: Option<String>,
     device: Option<String>,
     buffer_frames: Option<u32>,
 ) -> Result<StreamDto, String> {
     let io = state.0.lock().map_err(|_| "audio state poisoned")?;
+    if host.is_some() {
+        io.set_host(host);
+    }
     let info = io.start_tone(device, buffer_frames, 440.0, 0.1)?;
-    Ok(StreamDto {
-        device: info.device,
-        sample_rate: info.sample_rate,
-        buffer_frames: info.buffer_frames,
-    })
+    Ok(stream_dto(info))
 }
 
 /// Stop the current stream.
@@ -267,19 +321,30 @@ fn audio_stats(state: State<'_, AudioState>) -> Result<StatsDto, String> {
         max_callback_us: s.max_callback_us,
         budget_us: s.budget_us,
         peak_load: s.peak_load,
+        min_callback_frames: s.min_callback_frames,
+        max_callback_frames: s.max_callback_frames,
+        rt_priority: rt_label(s.rt_priority),
+        device_lost: s.device_lost,
     })
 }
 
 // ---- Phase 1: engine hosting ----
 
 /// Open the output stream hosting a fresh Engine at the device rate.
+/// `host` (driver type) is optional: None keeps the one in use; it also
+/// applies to the input stream opened afterwards (ASIO runs both on one
+/// driver).
 #[tauri::command]
 fn engine_start(
     io: State<'_, AudioState>,
     eng: State<'_, EngineState>,
+    host: Option<String>,
     device: Option<String>,
     buffer_frames: Option<u32>,
 ) -> Result<StreamDto, String> {
+    if host.is_some() {
+        io.0.lock().map_err(|_| "audio state poisoned")?.set_host(host);
+    }
     do_engine_start(&io, &eng, device, buffer_frames)
 }
 
@@ -471,7 +536,10 @@ fn engine_snapshot(
     io: State<'_, AudioState>,
     eng: State<'_, EngineState>,
 ) -> Result<SnapshotDto, String> {
-    let stats = io.0.lock().map_err(|_| "audio state poisoned")?.stats();
+    let (stats, input_silent) = {
+        let io = io.0.lock().map_err(|_| "audio state poisoned")?;
+        (io.stats(), io.input_silent())
+    };
     let mut e = eng.0.lock().map_err(|_| "engine state poisoned")?;
     // Host obligation (sf-engine midimod): the ~30 Hz poll doubles as the
     // control-side service tick — pending MIDI-fx re-expansions for modulated
@@ -509,6 +577,9 @@ fn engine_snapshot(
         peak_load: stats.peak_load,
         max_callback_us: stats.max_callback_us,
         budget_us: stats.budget_us,
+        notice_seq: e.notice_seq,
+        notice: e.notice.clone(),
+        input_silent,
     })
 }
 
@@ -613,10 +684,10 @@ fn latency_dto(l: sf_io::LatencyInfo) -> LatencyDto {
     }
 }
 
-/// List selectable input devices.
+/// List selectable input devices on `host` (None = the driver type in use).
 #[tauri::command]
-fn input_devices() -> Vec<DeviceDto> {
-    sf_io::input_devices()
+fn input_devices(io: State<'_, AudioState>, host: Option<String>) -> Vec<DeviceDto> {
+    sf_io::input_devices_on(host_or_current(&io, host).as_deref())
         .into_iter()
         .map(|d| DeviceDto { name: d.name, is_default: d.is_default })
         .collect()
@@ -631,7 +702,7 @@ fn input_start(
     buffer_frames: Option<u32>,
 ) -> Result<StreamDto, String> {
     let info = io.0.lock().map_err(|_| "audio state poisoned")?.start_input(device, buffer_frames)?;
-    Ok(StreamDto { device: info.device, sample_rate: info.sample_rate, buffer_frames: info.buffer_frames })
+    Ok(stream_dto(info))
 }
 
 #[tauri::command]
@@ -648,7 +719,7 @@ fn input_info(io: State<'_, AudioState>) -> Result<Option<StreamDto>, String> {
         .lock()
         .map_err(|_| "audio state poisoned")?
         .input_info()
-        .map(|i| StreamDto { device: i.device, sample_rate: i.sample_rate, buffer_frames: i.buffer_frames }))
+        .map(stream_dto))
 }
 
 /// Arm the input. Returns the take id and the playhead at arm time (the
@@ -702,6 +773,85 @@ fn latency_set(io: State<'_, AudioState>, ms: Option<f64>) -> Result<LatencyDto,
     let io = io.0.lock().map_err(|_| "audio state poisoned")?;
     io.set_latency_override(ms);
     Ok(latency_dto(io.latency()))
+}
+
+// ---- audio-device supervisor (docs/WINDOWS_PORT_PLAN.md 3.4) ----
+
+/// Publish an automatic-restart message for the UI (toasted once per new
+/// text, so a retry loop while a device stays unplugged doesn't spam).
+fn post_notice(eng: &EngineState, msg: String) {
+    if let Ok(mut e) = eng.0.lock() {
+        if e.notice.as_deref() != Some(msg.as_str()) {
+            e.notice = Some(msg);
+            e.notice_seq += 1;
+        }
+    }
+}
+
+/// Re-open the engine stream after a device loss / stall / default change:
+/// the same request first (the device may be back), then the driver's
+/// default device, then the PLATFORM default driver's default device (an
+/// unplugged ASIO interface can leave no ASIO driver at all) — so playback
+/// is never left silent. The user's saved choice is untouched: the next
+/// launch / Apply tries it again.
+fn restart_engine(io: &AudioState, eng: &EngineState, req: sf_io::StreamRequest, reason: &str) -> String {
+    let switched = |info: StreamDto| format!("{reason}. Switched to \"{}\" (playback stopped).", info.device);
+    let first = match do_engine_start(io, eng, req.device.clone(), req.buffer_frames) {
+        Ok(info) => return format!("{reason}. Audio restarted on \"{}\" (playback stopped).", info.device),
+        Err(e) => e,
+    };
+    if req.device.is_some() {
+        if let Ok(info) = do_engine_start(io, eng, None, req.buffer_frames) {
+            return switched(info);
+        }
+    }
+    if req.host.is_some() {
+        if let Ok(g) = io.0.lock() {
+            g.set_host(None);
+        }
+        if let Ok(info) = do_engine_start(io, eng, None, req.buffer_frames) {
+            return switched(info);
+        }
+        // nothing worked: retry the user's driver later, not the fallback
+        if let Ok(g) = io.0.lock() {
+            g.set_host(req.host.clone());
+        }
+    }
+    if let Ok(g) = io.0.lock() {
+        g.retry_engine_later(req);
+    }
+    format!("{reason}. Audio could not restart: {first}")
+}
+
+/// One watchdog tick: ask sf-io which streams need restarting and do it.
+fn supervise(app: &tauri::AppHandle) {
+    let io = app.state::<AudioState>();
+    let eng = app.state::<EngineState>();
+    let (health, out_req, in_req) = match io.0.lock() {
+        Ok(g) => (g.check_health(), g.engine_request(), g.input_request()),
+        Err(_) => return,
+    };
+    if let (Some(reason), Some(req)) = (health.output, out_req) {
+        let msg = restart_engine(&io, &eng, req, &reason);
+        post_notice(&eng, msg);
+    }
+    if let (Some(reason), Some(req)) = (health.input, in_req) {
+        let res = {
+            let Ok(g) = io.0.lock() else { return };
+            g.start_input(req.device.clone(), req.buffer_frames).or_else(|e| {
+                if req.device.is_some() {
+                    g.start_input(None, req.buffer_frames)
+                } else {
+                    Err(e)
+                }
+            })
+        };
+        let msg = match res {
+            Ok(info) => format!("{reason}. Recording input is now \"{}\".", info.device),
+            Err(e) => format!("{reason}. Recording input could not restart: {e}"),
+        };
+        post_notice(&eng, msg);
+    }
 }
 
 /// SF_SMOKE=1: headless self-test — start the engine on the default device,
@@ -767,9 +917,20 @@ pub fn run() {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || run_smoke(handle));
             }
+            // device watchdog: restarts streams after unplug / driver reset /
+            // default-device change (WASAPI ends a stream on any error)
+            let handle = app.handle().clone();
+            std::thread::Builder::new()
+                .name("sf-audio-supervisor".into())
+                .spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    supervise(&handle);
+                })
+                .map_err(|e| e.to_string())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            audio_hosts,
             audio_devices,
             audio_start_tone,
             audio_stop,

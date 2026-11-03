@@ -31,12 +31,15 @@ fn main() {
     let project = sf_render::with_defaults(&project);
 
     let io = sf_io::IoHandle::spawn();
+    // SF_HOST = driver type (WASAPI / ASIO / CoreAudio), SF_DEVICE = output
+    // device by exact name; both optional (docs/WINDOWS.md)
+    io.set_host(std::env::var("SF_HOST").ok());
     let (info, mut ctl) = io
-        .start_engine(None, None)
+        .start_engine(std::env::var("SF_DEVICE").ok(), None)
         .unwrap_or_else(|e| panic!("start engine stream: {e}"));
     println!(
-        "stream: device={:?} sample_rate={} buffer_frames={:?}",
-        info.device, info.sample_rate, info.buffer_frames
+        "stream: device={:?} host={} sample_rate={} channels={} format={} buffer_frames={:?}",
+        info.device, info.host, info.sample_rate, info.channels, info.sample_format, info.buffer_frames
     );
 
     ctl.load_project(&project);

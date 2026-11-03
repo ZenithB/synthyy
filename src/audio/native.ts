@@ -9,7 +9,19 @@
 // nothing here is called.
 
 export type NativeDevice = { name: string; is_default: boolean }
-export type NativeStreamInfo = { device: string; sample_rate: number; buffer_frames: number | null }
+/** A driver type compiled into the desktop build: CoreAudio (macOS),
+ *  WASAPI (Windows), ASIO (Windows builds with the `asio` feature). */
+export type NativeHost = { name: string; is_default: boolean }
+export type NativeStreamInfo = {
+  device: string
+  sample_rate: number
+  /** null = the driver manages it (always on WASAPI) — see the stats'
+   *  callback frame range for what is actually happening */
+  buffer_frames: number | null
+  host?: string
+  channels?: number
+  sample_format?: string
+}
 export type NativeStats = {
   callbacks: number
   xruns: number
@@ -18,6 +30,12 @@ export type NativeStats = {
   max_callback_us: number
   budget_us: number
   peak_load: number
+  /** callback sizes actually seen (0 = none yet) */
+  min_callback_frames?: number
+  max_callback_frames?: number
+  /** 'host' = driver-managed priority; 'mmcss' / 'mmcss-failed' on WASAPI */
+  rt_priority?: 'host' | 'mmcss' | 'mmcss-failed'
+  device_lost?: boolean
 }
 
 export function isDesktop(): boolean {
@@ -29,11 +47,39 @@ function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
 }
 
 export const nativeAudio = {
-  devices: () => invoke<NativeDevice[]>('audio_devices'),
-  startTone: (device: string | null, bufferFrames: number | null) =>
-    invoke<NativeStreamInfo>('audio_start_tone', { device, bufferFrames }),
+  hosts: () => invoke<NativeHost[]>('audio_hosts'),
+  /** host null = the driver type currently in use */
+  devices: (host: string | null = null) => invoke<NativeDevice[]>('audio_devices', { host }),
+  startTone: (device: string | null, bufferFrames: number | null, host: string | null = null) =>
+    invoke<NativeStreamInfo>('audio_start_tone', { host, device, bufferFrames }),
   stop: () => invoke<void>('audio_stop'),
   stats: () => invoke<NativeStats>('audio_stats'),
+}
+
+// ---- desktop output choice (remembered per machine, never in the doc) ----
+// Driver type + output device + buffer size the ENGINE opens. null = platform
+// default driver / system default device / buffer from the latency preset.
+// Device names are per-machine, so this lives in localStorage like the
+// per-track input choice (state/inputs.ts).
+
+export type NativeOutputPrefs = { host: string | null; device: string | null; buffer: number | null }
+const OUT_KEY = 'sf-native-output'
+
+export function nativeOutputPrefs(): NativeOutputPrefs {
+  try {
+    const p = JSON.parse(localStorage.getItem(OUT_KEY) || '{}')
+    return {
+      host: typeof p.host === 'string' ? p.host : null,
+      device: typeof p.device === 'string' ? p.device : null,
+      buffer: typeof p.buffer === 'number' ? p.buffer : null,
+    }
+  } catch {
+    return { host: null, device: null, buffer: null }
+  }
+}
+
+export function setNativeOutputPrefs(p: NativeOutputPrefs) {
+  try { localStorage.setItem(OUT_KEY, JSON.stringify(p)) } catch { /* storage blocked — session only */ }
 }
 
 // ---- Phase 6: native recording (input takes, master capture, latency) ----
@@ -58,7 +104,8 @@ export type NativeLatency = {
 }
 
 export const nativeRecord = {
-  inputDevices: () => invoke<NativeDevice[]>('input_devices'),
+  /** host null = the driver type currently in use (inputs follow the output's driver) */
+  inputDevices: (host: string | null = null) => invoke<NativeDevice[]>('input_devices', { host }),
   inputStart: (device: string | null, bufferFrames: number | null) =>
     invoke<NativeStreamInfo>('input_start', { device, bufferFrames }),
   inputStop: () => invoke<void>('input_stop'),

@@ -147,7 +147,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --bundles msi,nsis ${{ env.TAURI_SIGN_CONFIG != '' && format('--config {0}', env.TAURI_SIGN_CONFIG) || '' }}
+          # --features asio: ASIO driver support (asio-sys fetches the
+          # Steinberg SDK at build time; libclang is on the runner image)
+          args: --bundles msi,nsis --features asio ${{ env.TAURI_SIGN_CONFIG != '' && format('--config {0}', env.TAURI_SIGN_CONFIG) || '' }}
           tagName: ${{ github.ref_name }}
           releaseName: "Synthtagram ${{ github.ref_name }}"
           releaseDraft: true

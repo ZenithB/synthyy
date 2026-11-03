@@ -4,6 +4,8 @@
 //! is that frames flow callback → ring → writer → take without drops.
 //!
 //!   cargo run -p sf-io --example record-probe [device-name] [buffer-frames]
+//!
+//! Env: SF_HOST picks the driver type (e.g. WASAPI, ASIO).
 
 use std::time::Duration;
 
@@ -12,10 +14,12 @@ fn main() {
     let device = args.first().cloned();
     let buffer = args.get(1).and_then(|s| s.parse().ok());
 
-    for d in sf_io::input_devices() {
+    let host = std::env::var("SF_HOST").ok();
+    for d in sf_io::input_devices_on(host.as_deref()) {
         println!("input: {}{}", d.name, if d.is_default { " (default)" } else { "" });
     }
     let io = sf_io::IoHandle::spawn();
+    io.set_host(host);
     let info = match io.start_input(device, buffer) {
         Ok(i) => i,
         Err(e) => {
@@ -24,8 +28,8 @@ fn main() {
         }
     };
     println!(
-        "opened {} @ {} Hz (buffer {:?})",
-        info.device, info.sample_rate, info.buffer_frames
+        "opened {} [{}] @ {} Hz, {} ch {} (buffer {:?})",
+        info.device, info.host, info.sample_rate, info.channels, info.sample_format, info.buffer_frames
     );
     std::thread::sleep(Duration::from_millis(500));
     let id = io.start_take().expect("arm");
@@ -57,5 +61,11 @@ fn main() {
         st.input_xruns,
         io.latency()
     );
+    if !st.input_nonzero {
+        println!(
+            "WARNING: the input delivered exact digital silence. On Windows check Settings > \
+             Privacy & security > Microphone > \"Let desktop apps access your microphone\"."
+        );
+    }
     io.stop_input();
 }

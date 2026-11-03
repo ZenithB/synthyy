@@ -1,7 +1,8 @@
 # Running Synthtagram Desktop
 
 The desktop app is the existing React UI in a Tauri 2 shell with playback served
-by the native Rust engine (CoreAudio; sub-10 ms buffers). The browser app is
+by the native Rust engine (CoreAudio on macOS; WASAPI and optionally ASIO on
+Windows — setup and hardware tests in `docs/WINDOWS.md`). The browser app is
 unchanged and keeps deploying from the same repo.
 
 ## Prereqs (already set up on this machine)
@@ -16,10 +17,12 @@ npm run tauri dev
 ```
 
 First launch compiles the Rust workspace (~a minute), then opens the app window.
-Click anywhere / press Play — the native engine starts on the default output
-device. Audio Settings (top bar) has the desktop-only section: output-device
-picker, native buffer size (64–512), test tone, and live xrun / deadline-miss /
-load readouts. PerfMonitor shows real callback numbers.
+Click anywhere / press Play — the native engine starts on the remembered output
+(Audio Settings → native section: driver type, output device, buffer size; the
+system default until chosen). The section also has a test tone, Apply, and live
+callback-size / xrun / deadline-miss / load / thread-priority readouts.
+Unplugging the device or changing the system default restarts the engine on
+another device with a toast. PerfMonitor shows real callback numbers.
 
 What runs natively: all 11 instruments (samplers stream the webview's decoded
 samples over IPC), all 23 effects, MIDI fx, clip/scene launching, arrangement

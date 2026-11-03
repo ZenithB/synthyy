@@ -17,6 +17,14 @@ rtrb.workspace = true
 sf-render.workspace = true
 serde_json.workspace = true
 
-# ASIO lands later behind a feature flag (RUST_REWRITE_PLAN.md §9 — SDK licensing).
+# MMCSS ("Pro Audio") registration of the WASAPI callback thread. Same
+# version Tauri/WebView2 already pull in, so nothing new is downloaded.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [features]
 default = []
+# ASIO driver support (Windows only; a no-op elsewhere). Building it needs the
+# Steinberg ASIO SDK (CPAL_ASIO_DIR) and LLVM/clang for bindgen — see
+# docs/WINDOWS.md. Not on by default so a plain checkout always builds.
+asio = ["cpal/asio"]
