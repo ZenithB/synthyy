@@ -68,7 +68,7 @@ fn registry_matches_schema_dump() {
     let raw = include_str!("../../../fixtures/schema-dump.json");
     let dump: Dump = serde_json::from_str(raw).unwrap();
     assert_eq!(dump.instruments.len(), 11);
-    assert_eq!(dump.effects.len(), 25); // +gate (upstream ffde19e), +destroyer
+    assert_eq!(dump.effects.len(), 29); // +gate (upstream ffde19e), +destroyer, +orbit/stutter/dropout/cloud
     assert_eq!(dump.midifx.len(), 5);
     check("inst", &dump.instruments, &INSTRUMENTS);
     check("fx", &dump.effects, &EFFECTS);

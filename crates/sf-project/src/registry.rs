@@ -405,8 +405,58 @@ static FX_DESTROYER: [ParamSpec; 22] = [
     ParamSpec { key: "gain", label: "Output", min: -24.0, max: 12.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
 ];
 
+static FX_ORBIT: [ParamSpec; 8] = [
+    ParamSpec { key: "path", label: "Path", min: 0.0, max: 4.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Circle", "Figure 8", "Fly-by", "Pendulum", "Drift"]), rate_switch: false },
+    ParamSpec { key: "rate", label: "Rate", min: 0.0, max: 6.0, def: 3.0, curve: Curve::Linear, int: true, steps: Some(&["8 bar", "4 bar", "2 bar", "1 bar", "1/2", "1/4", "1/8"]), rate_switch: false },
+    ParamSpec { key: "dist", label: "Distance", min: 0.5, max: 10.0, def: 2.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "height", label: "Height", min: -1.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "width", label: "Width", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "doppler", label: "Doppler", min: 0.0, max: 1.0, def: 0.5, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "mix", label: "Mix", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "gain", label: "Output", min: -24.0, max: 24.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+];
+
+static FX_STUTTER: [ParamSpec; 10] = [
+    ParamSpec { key: "interval", label: "Interval", min: 0.0, max: 3.0, def: 2.0, curve: Curve::Linear, int: true, steps: Some(&["1/4", "1/2", "1 bar", "2 bar"]), rate_switch: false },
+    ParamSpec { key: "chance", label: "Chance", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "gate", label: "Length", min: 0.0, max: 1.0, def: 0.5, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "grid", label: "Grid", min: 0.0, max: 5.0, def: 2.0, curve: Curve::Linear, int: true, steps: Some(&["1/4", "1/8", "1/16", "1/32", "1/64", "1/8T"]), rate_switch: false },
+    ParamSpec { key: "decay", label: "Shrink", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "pitch", label: "Pitch", min: -12.0, max: 12.0, def: 0.0, curve: Curve::Linear, int: true, steps: None, rate_switch: false },
+    ParamSpec { key: "reverse", label: "Reverse", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "fade", label: "Fade", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "mix", label: "Mix", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "gain", label: "Output", min: -24.0, max: 24.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+];
+
+static FX_DROPOUT: [ParamSpec; 8] = [
+    ParamSpec { key: "bitrate", label: "Bitrate", min: 8.0, max: 320.0, def: 48.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "warble", label: "Warble", min: 0.0, max: 1.0, def: 0.3, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "bw", label: "Bandwidth", min: 1000.0, max: 20000.0, def: 16000.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "loss", label: "Loss", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "burst", label: "Burst", min: 0.0, max: 1.0, def: 0.3, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "conceal", label: "Conceal", min: 0.0, max: 2.0, def: 1.0, curve: Curve::Linear, int: true, steps: Some(&["Silence", "Repeat", "Noise"]), rate_switch: false },
+    ParamSpec { key: "mix", label: "Mix", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "gain", label: "Output", min: -24.0, max: 24.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+];
+
+static FX_CLOUD: [ParamSpec; 12] = [
+    ParamSpec { key: "size", label: "Size", min: 10.0, max: 500.0, def: 80.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "density", label: "Density", min: 1.0, max: 100.0, def: 20.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "delay", label: "Delay", min: 0.0, max: 2000.0, def: 250.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "spray", label: "Spray", min: 0.0, max: 1.0, def: 0.3, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "pitch", label: "Pitch", min: -24.0, max: 24.0, def: 0.0, curve: Curve::Linear, int: true, steps: None, rate_switch: false },
+    ParamSpec { key: "scatter", label: "Scatter", min: 0.0, max: 12.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "reverse", label: "Reverse", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "spread", label: "Spread", min: 0.0, max: 1.0, def: 0.6, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "feedback", label: "Feedback", min: 0.0, max: 0.95, def: 0.3, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "freeze", label: "Freeze", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Off", "On"]), rate_switch: false },
+    ParamSpec { key: "mix", label: "Mix", min: 0.0, max: 1.0, def: 0.5, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "gain", label: "Output", min: -24.0, max: 24.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+];
+
 /// Every effect type, in schema.ts order.
-pub static EFFECTS: [(&str, &[ParamSpec]); 25] = [
+pub static EFFECTS: [(&str, &[ParamSpec]); 29] = [
     ("eq", &FX_EQ),
     ("filter", &FX_FILTER),
     ("delay", &FX_DELAY),
@@ -432,6 +482,10 @@ pub static EFFECTS: [(&str, &[ParamSpec]); 25] = [
     ("duck", &FX_DUCK),
     ("autotune", &FX_AUTOTUNE),
     ("destroyer", &FX_DESTROYER),
+    ("orbit", &FX_ORBIT),
+    ("stutter", &FX_STUTTER),
+    ("dropout", &FX_DROPOUT),
+    ("cloud", &FX_CLOUD),
 ];
 
 static MIDIFX_SCALE: [ParamSpec; 0] = [

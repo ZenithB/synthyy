@@ -7,11 +7,13 @@ pub mod autopan;
 pub mod autotune;
 pub mod cheby;
 pub mod chorus;
+pub mod cloud;
 pub mod comp;
 pub mod crush;
 pub mod delay;
 pub mod destroyer;
 pub mod dist;
+pub mod dropout;
 pub mod duck;
 pub mod eq;
 pub mod eq7;
@@ -19,11 +21,13 @@ pub mod filter;
 pub mod gate;
 pub mod mbcomp;
 pub mod opto;
+pub mod orbit;
 pub mod phaser;
 pub mod pingpong;
 pub mod plate;
 pub mod reverb;
 pub mod shift;
+pub mod stutter;
 pub mod trem;
 pub mod vib;
 pub mod widen;
@@ -31,10 +35,10 @@ pub mod widen;
 use crate::traits::EffectDsp;
 
 /// All frozen effect type strings, registry order.
-pub const EFFECT_TYPES: [&str; 25] = [
+pub const EFFECT_TYPES: [&str; 29] = [
     "eq", "filter", "delay", "reverb", "plate", "eq7", "chorus", "dist", "crush", "comp", "opto",
     "mbcomp", "gate", "phaser", "pingpong", "autofilt", "trem", "autopan", "vib", "cheby", "widen",
-    "shift", "duck", "autotune", "destroyer",
+    "shift", "duck", "autotune", "destroyer", "orbit", "stutter", "dropout", "cloud",
 ];
 
 pub fn make_effect(type_: &str) -> Option<Box<dyn EffectDsp>> {
@@ -64,6 +68,10 @@ pub fn make_effect(type_: &str) -> Option<Box<dyn EffectDsp>> {
         "duck" => Box::new(duck::DuckFx::new()),
         "autotune" => Box::new(autotune::AutotuneFx::new()),
         "destroyer" => Box::new(destroyer::DestroyerFx::new()),
+        "orbit" => Box::new(orbit::OrbitFx::new()),
+        "stutter" => Box::new(stutter::StutterFx::new()),
+        "dropout" => Box::new(dropout::DropoutFx::new()),
+        "cloud" => Box::new(cloud::CloudFx::new()),
         _ => return None,
     })
 }

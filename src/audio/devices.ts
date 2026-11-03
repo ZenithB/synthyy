@@ -1086,6 +1086,37 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
         return { node, set: () => {}, dispose: () => node.dispose() }
       }
     }
+    case 'orbit':
+    case 'stutter':
+    case 'dropout':
+    case 'cloud': {
+      // Single AudioWorklet nodes (sf-orbit / sf-stutter / sf-dropout /
+      // sf-cloud), preloaded like sf-gate; passthrough if the module isn't
+      // registered. Orbit and Stutter follow the transport: tick() posts the
+      // position at `time`, and the worklet extrapolates it to its own
+      // currentTime, keeping a sample-accurate clock between posts.
+      try {
+        const node = Tone.getContext().createAudioWorkletNode(`sf-${type}`, {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+          channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+          processorOptions: { init: p },
+        }) as unknown as AudioWorkletNode
+        const synced = type === 'orbit' || type === 'stutter'
+        return {
+          node: node as unknown as Tone.ToneAudioNode,
+          set: (k, v) => node.port.postMessage({ k, v }),
+          ...(synced ? {
+            tick: (posTicks: number, playing: boolean, bpm: number, time?: number) => {
+              node.port.postMessage({ tr: { pos: posTicks, t: time ?? Tone.now(), bpm, playing } })
+            },
+          } : {}),
+          dispose: () => { try { node.disconnect() } catch { /* ok */ } },
+        }
+      } catch {
+        const node = new Tone.Gain(1)
+        return { node, set: () => {}, dispose: () => node.dispose() }
+      }
+    }
     case 'phaser': {
       // Tone composite on purpose — see the chorus note above (worklet port
       // tried and reverted for sounding different from the original device).

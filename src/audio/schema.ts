@@ -505,6 +505,80 @@ export const EFFECTS: EffectSchema[] = [
       { key: 'gain', label: 'Output', min: -24, max: 12, def: 0, fmt: fmtDb },
     ],
   },
+  {
+    // Orbit — binaural 3D mover, one AudioWorklet node (sf-orbit). The mono
+    // sum travels a tempo-synced path around the listener's head: per-ear
+    // Doppler + interaural delay, spherical-head shadow, air absorption and
+    // behind-the-head darkening, 1/r distance gain. Best on headphones.
+    type: 'orbit', label: 'Orbit', icon: 'orbit', group: 'Other',
+    params: [
+      { key: 'path', label: 'Path', min: 0, max: 4, def: 0, int: true, steps: ['Circle', 'Figure 8', 'Fly-by', 'Pendulum', 'Drift'] },
+      { key: 'rate', label: 'Rate', min: 0, max: 6, def: 3, int: true, steps: ['8 bar', '4 bar', '2 bar', '1 bar', '1/2', '1/4', '1/8'] },
+      { key: 'dist', label: 'Distance', min: 0.5, max: 10, def: 2, exp: true, fmt: v => `${v.toFixed(1)}m` },
+      { key: 'height', label: 'Height', min: -1, max: 1, def: 0, fmt: v => v.toFixed(2) },
+      { key: 'width', label: 'Width', min: 0, max: 1, def: 1, fmt: fmtPct },
+      { key: 'doppler', label: 'Doppler', min: 0, max: 1, def: 0.5, fmt: fmtPct },
+      { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
+      { key: 'gain', label: 'Output', min: -24, max: 24, def: 0, fmt: fmtDb },
+    ],
+  },
+  {
+    // Stutter — tempo-synced beat repeat, one AudioWorklet node (sf-stutter).
+    // On each Interval boundary (with probability Chance) the next Gate ×
+    // interval repeats a Grid-length slice; each repeat can shrink (Decay),
+    // pitch (Pitch per repeat), reverse and fade. Dry while stopped.
+    type: 'stutter', label: 'Stutter', icon: 'stutter', group: 'Temporal',
+    params: [
+      { key: 'interval', label: 'Interval', min: 0, max: 3, def: 2, int: true, steps: ['1/4', '1/2', '1 bar', '2 bar'] },
+      { key: 'chance', label: 'Chance', min: 0, max: 1, def: 1, fmt: fmtPct },
+      { key: 'gate', label: 'Length', min: 0, max: 1, def: 0.5, fmt: fmtPct },
+      { key: 'grid', label: 'Grid', min: 0, max: 5, def: 2, int: true, steps: ['1/4', '1/8', '1/16', '1/32', '1/64', '1/8T'] },
+      { key: 'decay', label: 'Shrink', min: 0, max: 1, def: 0, fmt: fmtPct },
+      { key: 'pitch', label: 'Pitch', min: -12, max: 12, def: 0, int: true, fmt: fmtSemi },
+      { key: 'reverse', label: 'Reverse', min: 0, max: 1, def: 0, fmt: fmtPct },
+      { key: 'fade', label: 'Fade', min: 0, max: 1, def: 0, fmt: fmtPct },
+      { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
+      { key: 'gain', label: 'Output', min: -24, max: 24, def: 0, fmt: fmtDb },
+    ],
+  },
+  {
+    // Dropout — codec / packet-loss emulation, one AudioWorklet node
+    // (sf-dropout). MDCT frames are band-quantised (Bitrate, Warble),
+    // band-limited (Bandwidth) and lost in bursty packets (Loss, Burst), with
+    // the gap filled by Silence, a decaying Repeat or Noise. 512-sample latency.
+    type: 'dropout', label: 'Dropout', icon: 'dropout', group: 'Harmonic',
+    params: [
+      { key: 'bitrate', label: 'Bitrate', min: 8, max: 320, def: 48, exp: true, fmt: v => `${Math.round(v)}k` },
+      { key: 'warble', label: 'Warble', min: 0, max: 1, def: 0.3, fmt: fmtPct },
+      { key: 'bw', label: 'Bandwidth', min: 1000, max: 20000, def: 16000, exp: true, fmt: fmtHz },
+      { key: 'loss', label: 'Loss', min: 0, max: 1, def: 0, fmt: fmtPct },
+      { key: 'burst', label: 'Burst', min: 0, max: 1, def: 0.3, fmt: fmtPct },
+      { key: 'conceal', label: 'Conceal', min: 0, max: 2, def: 1, int: true, steps: ['Silence', 'Repeat', 'Noise'] },
+      { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
+      { key: 'gain', label: 'Output', min: -24, max: 24, def: 0, fmt: fmtDb },
+    ],
+  },
+  {
+    // Cloud — granular delay, one AudioWorklet node (sf-cloud). Grains of
+    // Size ms are sprayed from a 4 s buffer Delay ms behind the input at
+    // Density per second, pitched (± Scatter), sometimes reversed, panned
+    // within Spread; Feedback re-records the cloud, Freeze holds the buffer.
+    type: 'cloud', label: 'Cloud', icon: 'cloud', group: 'Temporal',
+    params: [
+      { key: 'size', label: 'Size', min: 10, max: 500, def: 80, exp: true, fmt: v => `${Math.round(v)}ms` },
+      { key: 'density', label: 'Density', min: 1, max: 100, def: 20, exp: true, fmt: v => `${Math.round(v)}/s` },
+      { key: 'delay', label: 'Delay', min: 0, max: 2000, def: 250, fmt: v => `${Math.round(v)}ms` },
+      { key: 'spray', label: 'Spray', min: 0, max: 1, def: 0.3, fmt: fmtPct },
+      { key: 'pitch', label: 'Pitch', min: -24, max: 24, def: 0, int: true, fmt: fmtSemi },
+      { key: 'scatter', label: 'Scatter', min: 0, max: 12, def: 0, fmt: v => `±${v.toFixed(1)}st` },
+      { key: 'reverse', label: 'Reverse', min: 0, max: 1, def: 0, fmt: fmtPct },
+      { key: 'spread', label: 'Spread', min: 0, max: 1, def: 0.6, fmt: fmtPct },
+      { key: 'feedback', label: 'Feedback', min: 0, max: 0.95, def: 0.3, fmt: fmtPct },
+      { key: 'freeze', label: 'Freeze', min: 0, max: 1, def: 0, int: true, steps: ['Off', 'On'] },
+      { key: 'mix', label: 'Mix', min: 0, max: 1, def: 0.5, fmt: fmtPct },
+      { key: 'gain', label: 'Output', min: -24, max: 24, def: 0, fmt: fmtDb },
+    ],
+  },
 ]
 
 export function instSchema(type: string) {

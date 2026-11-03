@@ -647,6 +647,9 @@ function DuckSource({ trackId, fxId, fx }: { trackId: string; fxId: string; fx: 
   )
 }
 
+// effects with enough params to need the wide multi-row card layout
+const WIDE_FX = new Set(['mbcomp', 'eq7', 'gate', 'destroyer', 'orbit', 'stutter', 'dropout', 'cloud'])
+
 function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
   const type = fx.get('type') as string
   const fxId = fx.get('id') as string
@@ -658,7 +661,7 @@ function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
   const grMax = type === 'gate' ? 60 : 24
   const hasGr = type === 'comp' || type === 'opto' || type === 'gate'
   return (
-    <div className={`device fx-device ${on ? '' : 'bypassed'} ${type === 'mbcomp' || type === 'eq7' || type === 'gate' || type === 'destroyer' ? 'mbcomp-device' : ''}`}>
+    <div className={`device fx-device ${on ? '' : 'bypassed'} ${WIDE_FX.has(type) ? 'mbcomp-device' : ''}`}>
       <div className="device-head">
         <button className={`power ${on ? 'on' : ''}`} data-info="Bypass effect" onClick={() => setFxOn(trackId, fxId, !on)}><Icon name="power" size={13} /></button>
         <span className="device-title"><Icon name={schema.icon} size={13} /> {schema.label}</span>

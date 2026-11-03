@@ -29,6 +29,8 @@ import { setUI, toast, ui } from '../state/store'
 import type { EngineApi, EngineMode } from './engine-api'
 
 const STOP = '__stop__'
+// Single-worklet effects added together (Orbit, Stutter, Dropout, Cloud)
+const FX4_WORKLETS = ['/sf-orbit.js', '/sf-stutter.js', '/sf-dropout.js', '/sf-cloud.js']
 
 // `bypassed`: the device's params make it audibly transparent (fxNeutral) and
 // nothing (LFO/macro/automation) targets it, so the chain is wired AROUND it.
@@ -391,6 +393,7 @@ class Engine implements EngineApi {
   private fxWorkletReady: Promise<void> | null = null
   private gateWorkletReady: Promise<void> | null = null
   private destroyerWorkletReady: Promise<void> | null = null
+  private fx4WorkletReady: Promise<void> | null = null
   private async ensureMbWorklet() {
     try {
       const ctx = Tone.getContext().rawContext as AudioContext
@@ -399,10 +402,14 @@ class Engine implements EngineApi {
       if (!this.fxWorkletReady) this.fxWorkletReady = ctx.audioWorklet.addModule('/sf-fx.js')
       if (!this.gateWorkletReady) this.gateWorkletReady = ctx.audioWorklet.addModule('/sf-gate.js')
       if (!this.destroyerWorkletReady) this.destroyerWorkletReady = ctx.audioWorklet.addModule('/sf-destroyer.js')
+      if (!this.fx4WorkletReady) {
+        this.fx4WorkletReady = Promise.all(FX4_WORKLETS.map(u => ctx.audioWorklet.addModule(u))).then(() => {})
+      }
       await this.mbWorkletReady
       await this.fxWorkletReady
       await this.gateWorkletReady
       await this.destroyerWorkletReady
+      await this.fx4WorkletReady
     } catch { /* best-effort; devices degrade to passthrough/Tone if unavailable */ }
   }
 

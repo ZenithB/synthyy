@@ -201,6 +201,25 @@ const ICONS: Record<string, React.ReactNode> = {
     <path d="M1.5 8 L3.5 3.5 H6 L7.5 8 L9 12.5 H11.5 L13 8 L14.5 5" />
     <path d="M5 1.5 L4 4 M11 14.5 L12 12" opacity="0.6" />
   </>,
+  orbit: <>
+    <ellipse cx="8" cy="8.5" rx="6.5" ry="3" />
+    <circle cx="8" cy="8" r="2" />
+    <circle cx="13.2" cy="6.6" r="1.3" {...F} />
+  </>,
+  stutter: <>
+    <line x1="2" y1="4" x2="2" y2="12" /><line x1="5.5" y1="4" x2="5.5" y2="12" />
+    <line x1="8.5" y1="5" x2="8.5" y2="11" opacity="0.75" /><line x1="11" y1="6" x2="11" y2="10" opacity="0.55" />
+    <line x1="13" y1="6.8" x2="13" y2="9.2" opacity="0.4" /><line x1="14.6" y1="7.4" x2="14.6" y2="8.6" opacity="0.3" />
+  </>,
+  dropout: <>
+    <path d="M1.5 8 Q3 3 4.5 8 T7 8" />
+    <line x1="8.2" y1="8" x2="9.6" y2="8" strokeDasharray="1 1.2" />
+    <path d="M10.6 8 Q12 13 13.4 8 L14.6 8" />
+  </>,
+  cloud: <>
+    <path d="M4.5 12 H12 A2.6 2.6 0 0 0 11.6 6.8 A3.6 3.6 0 0 0 4.8 7.6 A2.2 2.2 0 0 0 4.5 12 Z" />
+    <circle cx="6.5" cy="9.6" r="0.6" {...F} /><circle cx="9" cy="9" r="0.6" {...F} /><circle cx="11" cy="10" r="0.6" {...F} />
+  </>,
   gate: <>
     <path d="M2 12.5 H5 V4 H8.5 V12.5 H11.5 V4 H14" />
     <line x1="1.5" y1="8.2" x2="14.5" y2="8.2" strokeDasharray="2 2" opacity="0.55" />
