@@ -197,6 +197,10 @@ const ICONS: Record<string, React.ReactNode> = {
     <line x1="8" y1="1" x2="8" y2="2.4" /><line x1="8" y1="13.6" x2="8" y2="15" />
     <line x1="1" y1="8" x2="2.4" y2="8" /><line x1="13.6" y1="8" x2="15" y2="8" />
   </>,
+  destroyer: <>
+    <path d="M1.5 8 L3.5 3.5 H6 L7.5 8 L9 12.5 H11.5 L13 8 L14.5 5" />
+    <path d="M5 1.5 L4 4 M11 14.5 L12 12" opacity="0.6" />
+  </>,
   gate: <>
     <path d="M2 12.5 H5 V4 H8.5 V12.5 H11.5 V4 H14" />
     <line x1="1.5" y1="8.2" x2="14.5" y2="8.2" strokeDasharray="2 2" opacity="0.55" />

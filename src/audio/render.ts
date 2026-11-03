@@ -148,8 +148,9 @@ async function registerOfflineWorklets(project: ProjectJSON, onlyTrack?: TrackJS
   const all = fxLists.flat().filter(f => f.on)
   const needMb = all.some(f => f.type === 'mbcomp')
   const needGate = all.some(f => f.type === 'gate')
+  const needDestroyer = all.some(f => f.type === 'destroyer')
   const needFx = all.some(f => SF_FX_TYPES.includes(f.type))
-  if (!needMb && !needGate && !needFx) return
+  if (!needMb && !needGate && !needDestroyer && !needFx) return
   const ctx = Tone.getContext()
   if (!(ctx.rawContext as any)?.audioWorklet) return
   const load = async (url: string) => {
@@ -165,6 +166,7 @@ async function registerOfflineWorklets(project: ProjectJSON, onlyTrack?: TrackJS
   }
   if (needMb) await load('/sf-mbdyn.js')
   if (needGate) await load('/sf-gate.js')
+  if (needDestroyer) await load('/sf-destroyer.js')
   if (needFx) await load('/sf-fx.js')
 }
 

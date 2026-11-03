@@ -472,6 +472,39 @@ export const EFFECTS: EffectSchema[] = [
       { key: 'mode', label: 'Snap', min: 0, max: 1, def: 0, int: true, steps: ['Key', 'Chr'] },
     ],
   },
+  {
+    // Destroyer — "distortion plus", one AudioWorklet node (sf-destroyer).
+    // Flatten (one-knob leveller) → clipper (6 curves, bias, 1×/2×/4×
+    // oversampled) with three 12 dB/oct multimode filters: F1/F2 placed
+    // Pre / Post / Side of the clipper by `route` (3×3 = 9 routings; Side runs
+    // in PARALLEL, clean — e.g. LP Side keeps a clean low end under distorted
+    // mids), F3 = Tone after the sum. Mix, output, optional limiter.
+    type: 'destroyer', label: 'Destroyer', icon: 'destroyer', group: 'Harmonic',
+    params: [
+      { key: 'drive', label: 'Drive', min: 0, max: 48, def: 18, fmt: fmtDb },
+      { key: 'flat', label: 'Flatten', min: 0, max: 1, def: 0.3, fmt: fmtPct },
+      { key: 'curve', label: 'Curve', min: 0, max: 5, def: 2, int: true, steps: ['Soft', 'Hard', 'Diode', 'Tube', 'Fold', 'Rectify'] },
+      { key: 'bias', label: 'Bias', min: -1, max: 1, def: 0, fmt: v => v.toFixed(2) },
+      { key: 'thresh', label: 'Clip Lvl', min: -24, max: 0, def: 0, fmt: fmtDb },
+      { key: 'route', label: 'Routing', min: 0, max: 8, def: 0, int: true, steps: ['All Pre', '1 Pre 2 Post', '1 Pre 2 Side', '1 Post 2 Pre', 'All Post', '1 Post 2 Side', '1 Side 2 Pre', '1 Side 2 Post', 'All Side'] },
+      { key: 'f1type', label: 'F1 Type', min: 0, max: 4, def: 0, int: true, steps: ['Off', 'LP', 'BP', 'HP', 'BR'] },
+      { key: 'f1freq', label: 'F1 Freq', min: 20, max: 20000, def: 800, exp: true, fmt: fmtHz },
+      { key: 'f1res', label: 'F1 Res', min: 0, max: 1, def: 0.2, fmt: fmtPct },
+      { key: 'f1vol', label: 'F1 Vol', min: -24, max: 12, def: 0, fmt: fmtDb },
+      { key: 'f2type', label: 'F2 Type', min: 0, max: 4, def: 0, int: true, steps: ['Off', 'LP', 'BP', 'HP', 'BR'] },
+      { key: 'f2freq', label: 'F2 Freq', min: 20, max: 20000, def: 3000, exp: true, fmt: fmtHz },
+      { key: 'f2res', label: 'F2 Res', min: 0, max: 1, def: 0.2, fmt: fmtPct },
+      { key: 'f2vol', label: 'F2 Vol', min: -24, max: 12, def: 0, fmt: fmtDb },
+      { key: 'f3type', label: 'Tone Type', min: 0, max: 4, def: 0, int: true, steps: ['Off', 'LP', 'BP', 'HP', 'BR'] },
+      { key: 'f3freq', label: 'Tone Freq', min: 20, max: 20000, def: 8000, exp: true, fmt: fmtHz },
+      { key: 'f3res', label: 'Tone Res', min: 0, max: 1, def: 0.1, fmt: fmtPct },
+      { key: 'f3vol', label: 'Tone Vol', min: -24, max: 12, def: 0, fmt: fmtDb },
+      { key: 'os', label: 'Quality', min: 0, max: 2, def: 1, int: true, steps: ['1x', '2x', '4x'] },
+      { key: 'limit', label: 'Limiter', min: 0, max: 1, def: 1, int: true, steps: ['Off', 'On'] },
+      { key: 'mix', label: 'Mix', min: 0, max: 1, def: 1, fmt: fmtPct },
+      { key: 'gain', label: 'Output', min: -24, max: 12, def: 0, fmt: fmtDb },
+    ],
+  },
 ]
 
 export function instSchema(type: string) {

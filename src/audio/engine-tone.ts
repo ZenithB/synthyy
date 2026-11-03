@@ -390,6 +390,7 @@ class Engine implements EngineApi {
   private mbWorkletReady: Promise<void> | null = null
   private fxWorkletReady: Promise<void> | null = null
   private gateWorkletReady: Promise<void> | null = null
+  private destroyerWorkletReady: Promise<void> | null = null
   private async ensureMbWorklet() {
     try {
       const ctx = Tone.getContext().rawContext as AudioContext
@@ -397,9 +398,11 @@ class Engine implements EngineApi {
       if (!this.mbWorkletReady) this.mbWorkletReady = ctx.audioWorklet.addModule('/sf-mbdyn.js')
       if (!this.fxWorkletReady) this.fxWorkletReady = ctx.audioWorklet.addModule('/sf-fx.js')
       if (!this.gateWorkletReady) this.gateWorkletReady = ctx.audioWorklet.addModule('/sf-gate.js')
+      if (!this.destroyerWorkletReady) this.destroyerWorkletReady = ctx.audioWorklet.addModule('/sf-destroyer.js')
       await this.mbWorkletReady
       await this.fxWorkletReady
       await this.gateWorkletReady
+      await this.destroyerWorkletReady
     } catch { /* best-effort; devices degrade to passthrough/Tone if unavailable */ }
   }
 

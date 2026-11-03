@@ -1066,6 +1066,26 @@ export function makeEffect(type: string, p: Record<string, number>): Fx {
         return { node, set: () => {}, gr: () => 0, dispose: () => node.dispose() }
       }
     }
+    case 'destroyer': {
+      // Single AudioWorklet node (sf-destroyer): flattener + multimode filters
+      // routed pre/post/side around an oversampled clipper. Preloaded like
+      // sf-gate; degrades to a clean passthrough if the module isn't there.
+      try {
+        const node = Tone.getContext().createAudioWorkletNode('sf-destroyer', {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2],
+          channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers',
+          processorOptions: { init: p },
+        }) as unknown as AudioWorkletNode
+        return {
+          node: node as unknown as Tone.ToneAudioNode,
+          set: (k, v) => node.port.postMessage({ k, v }),
+          dispose: () => { try { node.disconnect() } catch { /* ok */ } },
+        }
+      } catch {
+        const node = new Tone.Gain(1)
+        return { node, set: () => {}, dispose: () => node.dispose() }
+      }
+    }
     case 'phaser': {
       // Tone composite on purpose — see the chorus note above (worklet port
       // tried and reverted for sounding different from the original device).

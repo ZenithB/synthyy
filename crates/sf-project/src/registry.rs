@@ -380,8 +380,33 @@ static FX_AUTOTUNE: [ParamSpec; 4] = [
     ParamSpec { key: "mode", label: "Snap", min: 0.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Key", "Chr"]), rate_switch: false },
 ];
 
+static FX_DESTROYER: [ParamSpec; 22] = [
+    ParamSpec { key: "drive", label: "Drive", min: 0.0, max: 48.0, def: 18.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "flat", label: "Flatten", min: 0.0, max: 1.0, def: 0.3, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "curve", label: "Curve", min: 0.0, max: 5.0, def: 2.0, curve: Curve::Linear, int: true, steps: Some(&["Soft", "Hard", "Diode", "Tube", "Fold", "Rectify"]), rate_switch: false },
+    ParamSpec { key: "bias", label: "Bias", min: -1.0, max: 1.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "thresh", label: "Clip Lvl", min: -24.0, max: 0.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "route", label: "Routing", min: 0.0, max: 8.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["All Pre", "1 Pre 2 Post", "1 Pre 2 Side", "1 Post 2 Pre", "All Post", "1 Post 2 Side", "1 Side 2 Pre", "1 Side 2 Post", "All Side"]), rate_switch: false },
+    ParamSpec { key: "f1type", label: "F1 Type", min: 0.0, max: 4.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Off", "LP", "BP", "HP", "BR"]), rate_switch: false },
+    ParamSpec { key: "f1freq", label: "F1 Freq", min: 20.0, max: 20000.0, def: 800.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f1res", label: "F1 Res", min: 0.0, max: 1.0, def: 0.2, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f1vol", label: "F1 Vol", min: -24.0, max: 12.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f2type", label: "F2 Type", min: 0.0, max: 4.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Off", "LP", "BP", "HP", "BR"]), rate_switch: false },
+    ParamSpec { key: "f2freq", label: "F2 Freq", min: 20.0, max: 20000.0, def: 3000.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f2res", label: "F2 Res", min: 0.0, max: 1.0, def: 0.2, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f2vol", label: "F2 Vol", min: -24.0, max: 12.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f3type", label: "Tone Type", min: 0.0, max: 4.0, def: 0.0, curve: Curve::Linear, int: true, steps: Some(&["Off", "LP", "BP", "HP", "BR"]), rate_switch: false },
+    ParamSpec { key: "f3freq", label: "Tone Freq", min: 20.0, max: 20000.0, def: 8000.0, curve: Curve::Exp, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f3res", label: "Tone Res", min: 0.0, max: 1.0, def: 0.1, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "f3vol", label: "Tone Vol", min: -24.0, max: 12.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "os", label: "Quality", min: 0.0, max: 2.0, def: 1.0, curve: Curve::Linear, int: true, steps: Some(&["1x", "2x", "4x"]), rate_switch: false },
+    ParamSpec { key: "limit", label: "Limiter", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: true, steps: Some(&["Off", "On"]), rate_switch: false },
+    ParamSpec { key: "mix", label: "Mix", min: 0.0, max: 1.0, def: 1.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+    ParamSpec { key: "gain", label: "Output", min: -24.0, max: 12.0, def: 0.0, curve: Curve::Linear, int: false, steps: None, rate_switch: false },
+];
+
 /// Every effect type, in schema.ts order.
-pub static EFFECTS: [(&str, &[ParamSpec]); 24] = [
+pub static EFFECTS: [(&str, &[ParamSpec]); 25] = [
     ("eq", &FX_EQ),
     ("filter", &FX_FILTER),
     ("delay", &FX_DELAY),
@@ -406,6 +431,7 @@ pub static EFFECTS: [(&str, &[ParamSpec]); 24] = [
     ("shift", &FX_SHIFT),
     ("duck", &FX_DUCK),
     ("autotune", &FX_AUTOTUNE),
+    ("destroyer", &FX_DESTROYER),
 ];
 
 static MIDIFX_SCALE: [ParamSpec; 0] = [

@@ -658,7 +658,7 @@ function FxCard({ trackId, fx }: { trackId: string; fx: Y.Map<any> }) {
   const grMax = type === 'gate' ? 60 : 24
   const hasGr = type === 'comp' || type === 'opto' || type === 'gate'
   return (
-    <div className={`device fx-device ${on ? '' : 'bypassed'} ${type === 'mbcomp' || type === 'eq7' || type === 'gate' ? 'mbcomp-device' : ''}`}>
+    <div className={`device fx-device ${on ? '' : 'bypassed'} ${type === 'mbcomp' || type === 'eq7' || type === 'gate' || type === 'destroyer' ? 'mbcomp-device' : ''}`}>
       <div className="device-head">
         <button className={`power ${on ? 'on' : ''}`} data-info="Bypass effect" onClick={() => setFxOn(trackId, fxId, !on)}><Icon name="power" size={13} /></button>
         <span className="device-title"><Icon name={schema.icon} size={13} /> {schema.label}</span>

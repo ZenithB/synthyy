@@ -10,6 +10,7 @@ pub mod chorus;
 pub mod comp;
 pub mod crush;
 pub mod delay;
+pub mod destroyer;
 pub mod dist;
 pub mod duck;
 pub mod eq;
@@ -30,10 +31,10 @@ pub mod widen;
 use crate::traits::EffectDsp;
 
 /// All frozen effect type strings, registry order.
-pub const EFFECT_TYPES: [&str; 24] = [
+pub const EFFECT_TYPES: [&str; 25] = [
     "eq", "filter", "delay", "reverb", "plate", "eq7", "chorus", "dist", "crush", "comp", "opto",
     "mbcomp", "gate", "phaser", "pingpong", "autofilt", "trem", "autopan", "vib", "cheby", "widen",
-    "shift", "duck", "autotune",
+    "shift", "duck", "autotune", "destroyer",
 ];
 
 pub fn make_effect(type_: &str) -> Option<Box<dyn EffectDsp>> {
@@ -62,6 +63,7 @@ pub fn make_effect(type_: &str) -> Option<Box<dyn EffectDsp>> {
         "shift" => Box::new(shift::ShiftFx::new()),
         "duck" => Box::new(duck::DuckFx::new()),
         "autotune" => Box::new(autotune::AutotuneFx::new()),
+        "destroyer" => Box::new(destroyer::DestroyerFx::new()),
         _ => return None,
     })
 }
