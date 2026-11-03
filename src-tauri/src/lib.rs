@@ -43,6 +43,9 @@ struct EngineInner {
     /// toast; `notice_seq` bumps each time the message changes.
     notice_seq: u64,
     notice: Option<String>,
+    /// What the engine stream negotiated at its last (re)start — for the
+    /// Diagnostics report.
+    stream: Option<StreamDto>,
 }
 
 /// Rebuild the current graph from the stored project + sample bank (the
@@ -223,7 +226,9 @@ fn do_engine_start(
     }
     e.playing = false;
     e.ctl = Some(ctl);
-    Ok(stream_dto(info))
+    let dto = stream_dto(info);
+    e.stream = Some(dto.clone());
+    Ok(dto)
 }
 
 fn do_project_load(eng: &EngineState, project: Value) -> Result<ProjectLoadDto, String> {
@@ -243,24 +248,38 @@ fn do_project_load(eng: &EngineState, project: Value) -> Result<ProjectLoadDto, 
     Ok(ProjectLoadDto { tracks: track_ids, gr })
 }
 
-fn do_clip_launch(eng: &EngineState, track_id: &str, scene_id: &str) -> Result<(), String> {
+/// Launch a BATCH of session clips atomically. Every ClipLaunch is queued
+/// before the transport starts: the engine anchors launches that arrive
+/// while stopped at the play position, so the whole batch starts together.
+/// `start_from` = Some(ticks): start the transport there if it is stopped
+/// (the UI's "launching from stopped starts playback"); None: never start it
+/// (the caller issues transport_play itself, e.g. the re-push path).
+///
+/// Bug fixed here: the old per-clip path started the transport right after
+/// the FIRST launch, so launches 2..N arrived while playing and were
+/// quantised to the next bar — "track 1 on time, the others a bar late",
+/// and those stale anchors made every later Play repeat it.
+fn do_clips_launch(eng: &EngineState, launches: &[(&str, &str)], start_from: Option<f64>) -> Result<(), String> {
     let mut e = eng.0.lock().map_err(|_| "engine state poisoned")?;
     let was_playing = e.playing;
     let Some(ctl) = e.ctl.as_mut() else { return Ok(()) };
-    let (Some(track), Some(clip)) =
-        (ctl.resolver().track(track_id), ctl.resolver().scene(scene_id))
-    else {
-        return Ok(()); // unknown id (doc ahead of last push) — repush will fix
-    };
-    ctl.push_cmd(Cmd::ClipLaunch { track, clip });
-    // engine-tone launchClip starts the transport itself; in the split that's
-    // this layer's job (Cmd docs: stopped launches anchor at 0 and wait)
-    if !was_playing {
-        ctl.push_cmd(Cmd::TransportPlay { mode: Mode::Session, from_ticks: 0.0 });
+    for (track_id, scene_id) in launches {
+        // unknown id (doc ahead of the last push) is skipped — repush fixes it
+        if let (Some(track), Some(clip)) = (ctl.resolver().track(track_id), ctl.resolver().scene(scene_id)) {
+            ctl.push_cmd(Cmd::ClipLaunch { track, clip });
+        }
+    }
+    if let (Some(from), false) = (start_from, was_playing) {
+        ctl.push_cmd(Cmd::TransportPlay { mode: Mode::Session, from_ticks: from });
         e.playing = true;
         e.arr_mode = false;
     }
     Ok(())
+}
+
+/// One clip (a click on a slot): starts the transport from bar 1 if stopped.
+fn do_clip_launch(eng: &EngineState, track_id: &str, scene_id: &str) -> Result<(), String> {
+    do_clips_launch(eng, &[(track_id, scene_id)], Some(0.0))
 }
 
 // ---- Phase 0 commands (unchanged surface) ----
@@ -437,6 +456,21 @@ fn transport_stop(eng: State<'_, EngineState>) -> Result<(), String> {
 #[tauri::command]
 fn clip_launch(eng: State<'_, EngineState>, track_id: String, scene_id: String) -> Result<(), String> {
     do_clip_launch(&eng, &track_id, &scene_id)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchDto {
+    track_id: String,
+    scene_id: String,
+}
+
+/// Atomic batch launch (scene launch, resume after pause, re-push): see
+/// [`do_clips_launch`]. `start_from` null = leave the transport alone.
+#[tauri::command]
+fn clips_launch(eng: State<'_, EngineState>, launches: Vec<LaunchDto>, start_from: Option<f64>) -> Result<(), String> {
+    let pairs: Vec<(&str, &str)> = launches.iter().map(|l| (l.track_id.as_str(), l.scene_id.as_str())).collect();
+    do_clips_launch(&eng, &pairs, start_from)
 }
 
 #[tauri::command]
@@ -900,6 +934,214 @@ async fn latency_measure(io: State<'_, AudioState>) -> Result<f64, String> {
     io.0.lock().map_err(|_| "audio state poisoned")?.measure_roundtrip_ms()
 }
 
+// ---- Diagnostics (docs/WINDOWS_PORT_PLAN.md W6) ----
+// One button in Audio settings that gathers what the hardware acceptance
+// checks need from the user's PC, as a plain-text report they can send:
+// drivers/devices, the live stream, a timed health window while they play,
+// input state, latency, and the CPU headroom benchmark.
+
+fn rt_text(code: &str) -> &'static str {
+    match code {
+        "mmcss" => "real-time (MMCSS Pro Audio)",
+        "mmcss-failed" => "NORMAL - MMCSS registration failed",
+        _ => "managed by the driver",
+    }
+}
+
+fn diagnostics_report<R: tauri::Runtime>(app: &tauri::AppHandle<R>, seconds: u64) -> String {
+    use std::fmt::Write as _;
+    let io = app.state::<AudioState>();
+    let eng = app.state::<EngineState>();
+    let mut r = String::new();
+    let mut problems: Vec<String> = Vec::new();
+
+    let _ = writeln!(r, "Synthyy {} diagnostics", app.package_info().version);
+    let _ = writeln!(
+        r,
+        "System: {} {} - {} logical CPUs",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0)
+    );
+
+    // drivers and devices
+    let host = io.0.lock().ok().and_then(|g| g.host());
+    let hosts: Vec<String> = sf_io::hosts()
+        .into_iter()
+        .map(|h| if h.is_default { format!("{} (default)", h.name) } else { h.name })
+        .collect();
+    let _ = writeln!(r, "Drivers available: {}", hosts.join(", "));
+    let _ = writeln!(r, "Driver in use: {}", host.as_deref().unwrap_or("platform default"));
+    let list = |devs: Vec<sf_io::DeviceInfo>| -> String {
+        if devs.is_empty() {
+            return "  (none)".into();
+        }
+        devs.iter()
+            .map(|d| format!("  - {} [{} ch]{}", d.name, d.channels, if d.is_default { " (default)" } else { "" }))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let _ = writeln!(r, "Output devices:\n{}", list(sf_io::output_devices_on(host.as_deref())));
+    let _ = writeln!(r, "Input devices:\n{}", list(sf_io::input_devices_on(host.as_deref())));
+
+    // engine stream
+    let (stream, playing) = match eng.0.lock() {
+        Ok(e) => (e.stream.clone(), e.playing),
+        Err(_) => (None, false),
+    };
+    let out_first = io.0.lock().map(|g| g.output_channel()).unwrap_or(0);
+    let rate = match &stream {
+        Some(s) => {
+            let _ = writeln!(
+                r,
+                "Engine stream: {} [{}] {} Hz, {} ch {}, outputs {}-{}, buffer {}",
+                s.device,
+                s.host,
+                s.sample_rate,
+                s.channels,
+                s.sample_format,
+                out_first + 1,
+                out_first + 2,
+                s.buffer_frames.map_or("driver-managed".to_string(), |b| format!("{b} frames"))
+            );
+            s.sample_rate as f32
+        }
+        None => {
+            let _ = writeln!(r, "Engine stream: not started (press Play once, then run again)");
+            problems.push("The audio engine was not running.".into());
+            48_000.0
+        }
+    };
+
+    // live health window
+    let before = io.0.lock().map(|g| g.stats()).ok();
+    std::thread::sleep(std::time::Duration::from_secs(seconds));
+    let after = io.0.lock().map(|g| g.stats()).ok();
+    if let (Some(b), Some(a)) = (before, after) {
+        let cbs = a.callbacks.saturating_sub(b.callbacks);
+        let xr = a.xruns.saturating_sub(b.xruns);
+        let miss = a.over_budget.saturating_sub(b.over_budget);
+        let _ = writeln!(
+            r,
+            "Live check ({seconds} s{}): {cbs} callbacks, {xr} xruns, {miss} deadline misses",
+            if playing { ", transport playing" } else { ", transport stopped" }
+        );
+        let _ = writeln!(
+            r,
+            "  callback size {}-{} frames, peak load since start {:.0}%, priority {}",
+            a.min_callback_frames,
+            a.max_callback_frames,
+            a.peak_load * 100.0,
+            rt_text(match a.rt_priority {
+                sf_io::RT_MMCSS_OK => "mmcss",
+                sf_io::RT_MMCSS_FAILED => "mmcss-failed",
+                _ => "host",
+            })
+        );
+        if stream.is_some() && cbs == 0 {
+            problems.push("No audio callbacks during the check: the output is stalled.".into());
+        }
+        if xr > 0 || miss > 0 {
+            problems.push(format!("Dropouts during the check ({xr} xruns, {miss} deadline misses)."));
+        }
+        if a.rt_priority == sf_io::RT_MMCSS_FAILED {
+            problems.push("The audio thread could not get real-time priority (MMCSS).".into());
+        }
+        if a.device_lost {
+            problems.push("The output device reported itself lost.".into());
+        }
+    }
+
+    // input + latency
+    if let Ok(g) = io.0.lock() {
+        match g.input_info() {
+            Some(i) => {
+                let s = g.stats();
+                let _ = writeln!(
+                    r,
+                    "Input: {} [{}] {} Hz, {} ch {}; peak {:.1} dBFS; input xruns {}",
+                    i.device,
+                    i.host,
+                    i.sample_rate,
+                    i.channels,
+                    i.sample_format,
+                    20.0 * (s.input_peak.max(1e-9) as f64).log10(),
+                    s.input_xruns
+                );
+                if g.input_silent() {
+                    problems.push(
+                        "The input delivers exact silence: check Windows microphone privacy settings.".into(),
+                    );
+                }
+            }
+            None => {
+                let _ = writeln!(r, "Input: not open (opens on the first recording)");
+            }
+        }
+        let l = g.latency();
+        let _ = writeln!(
+            r,
+            "Record compensation: {:.1} ms ({})",
+            l.compensation_ms,
+            l.measured_roundtrip_ms.map_or("unmeasured".to_string(), |m| format!("measured round trip {m:.1} ms"))
+        );
+    }
+
+    // CPU headroom on the demo song
+    let _ = writeln!(r, "CPU headroom (demo song, 128-frame blocks @ {rate} Hz, one core):");
+    let demo: Result<ProjectJSON, _> = serde_json::from_str(include_str!("../assets/demo-project.json"));
+    match demo {
+        Ok(p) => {
+            let scope = p
+                .scenes
+                .first()
+                .map(|s| RenderScope::Scene { scene_id: s.id.clone().unwrap_or_else(|| s.name.clone()) })
+                .unwrap_or(RenderScope::Arr);
+            match sf_render::headroom(&p, &scope, 128, rate, 2.0, 32) {
+                Ok(steps) => {
+                    for s in &steps {
+                        let _ = writeln!(r, "  {:>2}x: mean {:.0}%  p99 {:.0}%  max {:.0}%", s.k, s.mean_pct, s.p99_pct, s.max_pct);
+                    }
+                    let fit = sf_render::headroom_fit(&steps);
+                    let _ = writeln!(r, "  RESULT: {fit}x the demo song fits in 70% of the deadline");
+                    if fit < 2 {
+                        problems.push(format!(
+                            "Low CPU headroom ({fit}x the demo song): use a larger buffer or report this."
+                        ));
+                    }
+                }
+                Err(e) => {
+                    let _ = writeln!(r, "  failed: {e}");
+                }
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(r, "  demo project unreadable: {e}");
+        }
+    }
+
+    let _ = writeln!(r);
+    if problems.is_empty() {
+        let _ = writeln!(r, "RESULT: no problems found");
+    } else {
+        let _ = writeln!(r, "PROBLEMS:");
+        for p in &problems {
+            let _ = writeln!(r, "  - {p}");
+        }
+    }
+    r
+}
+
+/// Run the Diagnostics (about `seconds` + 10 s) on a background thread and
+/// return the report text.
+#[tauri::command]
+async fn audio_diagnostics(app: tauri::AppHandle, seconds: Option<u64>) -> Result<String, String> {
+    let secs = seconds.unwrap_or(15).clamp(3, 120);
+    tauri::async_runtime::spawn_blocking(move || diagnostics_report(&app, secs))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn latency_get(io: State<'_, AudioState>) -> Result<LatencyDto, String> {
     Ok(latency_dto(io.0.lock().map_err(|_| "audio state poisoned")?.latency()))
@@ -1015,9 +1257,8 @@ fn run_smoke(app: tauri::AppHandle) {
                 .map(|s| s.id.clone().unwrap_or_else(|| s.name.clone()))
                 .ok_or("demo project has no scenes")?
         };
-        for tid in &loaded.tracks {
-            do_clip_launch(&eng, tid, &scene_id)?;
-        }
+        let batch: Vec<(&str, &str)> = loaded.tracks.iter().map(|t| (t.as_str(), scene_id.as_str())).collect();
+        do_clips_launch(&eng, &batch, Some(0.0))?;
         let mut max_peak = 0.0f32;
         for _ in 0..60 {
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -1082,6 +1323,7 @@ pub fn run() {
             transport_play,
             transport_stop,
             clip_launch,
+            clips_launch,
             clip_stop,
             note_preview,
             metronome,
@@ -1102,6 +1344,7 @@ pub fn run() {
             master_capture_stop,
             latency_measure,
             latency_get,
+            audio_diagnostics,
             latency_set
         ])
         .run(tauri::generate_context!())
@@ -1207,6 +1450,89 @@ mod tests {
             &[("x-sf-id", "x"), ("x-sf-rate", "48000"), ("x-sf-channels", "1")],
         );
         assert!(json.is_err());
+    }
+
+    /// The Diagnostics report runs end-to-end (mock runtime, no engine
+    /// started, possibly no audio devices) and flags the stopped engine.
+    #[test]
+    fn diagnostics_report_has_every_section() {
+        let app = tauri::test::mock_builder()
+            .manage(AudioState(Mutex::new(sf_io::IoHandle::spawn())))
+            .manage(EngineState(Mutex::new(EngineInner::default())))
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let r = diagnostics_report(app.handle(), 0);
+        for section in [
+            "diagnostics",
+            "System:",
+            "Drivers available:",
+            "Output devices:",
+            "Input devices:",
+            "Engine stream: not started",
+            "Live check (0 s",
+            "Input: not open",
+            "Record compensation:",
+            "CPU headroom",
+            "RESULT:",
+            "PROBLEMS:",
+            "The audio engine was not running.",
+        ] {
+            assert!(r.contains(section), "missing {section:?} in:\n{r}");
+        }
+    }
+
+    /// Render the first bar of the demo song with an engine driven only
+    /// through the IPC helpers; returns each track's peak level.
+    fn first_bar_peaks(launch: impl Fn(&EngineState)) -> Vec<(String, f32)> {
+        let mut engine = sf_engine::Engine::new(48_000.0);
+        let ctl = engine.split_control();
+        let eng = EngineState(Mutex::new(EngineInner { ctl: Some(ctl), ..Default::default() }));
+        let demo: Value = serde_json::from_str(include_str!("../assets/demo-project.json")).unwrap();
+        let ids = do_project_load(&eng, demo).unwrap().tracks;
+        let (mut l, mut r) = (vec![0.0f32; 128], vec![0.0f32; 128]);
+        engine.process(&mut l, &mut r); // adopt the new graph
+        launch(&eng);
+        // 90 % of one bar at 112 bpm
+        let frames = (4.0 * 60.0 / 112.0 * 48_000.0 * 0.9) as usize;
+        let mut peaks = vec![0.0f32; ids.len()];
+        for _ in 0..frames / 128 {
+            engine.process(&mut l, &mut r);
+            let snap = eng.0.lock().unwrap().ctl.as_ref().unwrap().snapshot();
+            for (p, m) in peaks.iter_mut().zip(snap.tracks.iter()) {
+                *p = p.max(m.peak);
+            }
+        }
+        ids.into_iter().zip(peaks).collect()
+    }
+
+    /// Bug report: "track 1 starts on time, the other tracks lag one bar".
+    /// Demo scene s3 has Drums, Bass and Chords clips, each with a note at
+    /// tick 0 — launched together from stopped, all three must sound in bar 1.
+    #[test]
+    fn scene_launch_from_stopped_starts_every_clip_in_bar_one() {
+        let scene = [("tDrums", "s3"), ("tBass", "s3"), ("tChords", "s3")];
+        let peaks = first_bar_peaks(|eng| do_clips_launch(eng, &scene, Some(0.0)).unwrap());
+        for (t, _) in scene {
+            let peak = peaks.iter().find(|(id, _)| id == t).unwrap().1;
+            assert!(peak > 1e-4, "{t} silent in bar 1 (peak {peak}); all: {peaks:?}");
+        }
+    }
+
+    /// The re-push path: stop, relaunch as a batch WITHOUT starting, then
+    /// play — every clip must still come in at bar 1.
+    #[test]
+    fn batch_launch_without_start_waits_for_transport_play() {
+        let scene = [("tDrums", "s3"), ("tBass", "s3"), ("tChords", "s3")];
+        let peaks = first_bar_peaks(|eng| {
+            do_clips_launch(eng, &scene, None).unwrap();
+            assert!(!eng.0.lock().unwrap().playing, "None must not start the transport");
+            let mut e = eng.0.lock().unwrap();
+            e.playing = true;
+            e.ctl.as_mut().unwrap().push_cmd(Cmd::TransportPlay { mode: Mode::Session, from_ticks: 0.0 });
+        });
+        for (t, _) in scene {
+            assert!(peaks.iter().find(|(id, _)| id == t).unwrap().1 > 1e-4, "{t} silent in bar 1: {peaks:?}");
+        }
     }
 
     #[test]

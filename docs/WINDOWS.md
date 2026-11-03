@@ -96,7 +96,30 @@ The stats line shows the callback size actually seen, xruns, deadline misses,
 peak load and — on WASAPI — the audio thread priority. It should read
 **real-time (MMCSS)**. If it says MMCSS registration failed, report it.
 
-## 3. Hardware tests (the W1 exit checks)
+## 3. Hardware tests (W6 acceptance)
+
+### 3.0 The quick way: Diagnostics (no tools needed)
+
+Install from the latest installer (the `windows-installer` run in the
+repository's Actions tab builds one for every app change), then:
+
+1. Pick the driver and device in **Audio settings → Native output**, press
+   **Apply to playback**.
+2. Launch a scene with several tracks so it is playing.
+3. **Audio settings → Diagnostics → Run checks** (about 25 s; keep it
+   playing). It records drivers and devices with channel counts, the live
+   stream (rate, format, buffer, routing), dropouts and deadline misses
+   during the check, the audio thread's priority, the recording input, the
+   latency compensation, and the CPU headroom test, and ends with
+   `RESULT: no problems found` or a `PROBLEMS:` list.
+4. **Save to Downloads** and send `synthyy-diagnostics.txt`.
+
+Run it once per driver (WASAPI, then ASIO) and per interface. The manual
+checks below (unplugging, drag and drop, display scaling, recording) still
+need a person; the command-line probes are for deeper digging and need the
+section 1 setup.
+
+### 3.0a Command-line probes (optional)
 
 Command-line probes run without the GUI. `SF_HOST` picks the driver type,
 `SF_DEVICE` an output device by exact name (the probes print the names).

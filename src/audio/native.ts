@@ -91,6 +91,9 @@ export const nativeAudio = {
     invoke<NativeStreamInfo>('audio_start_tone', { host, device, bufferFrames, outFirst }),
   stop: () => invoke<void>('audio_stop'),
   stats: () => invoke<NativeStats>('audio_stats'),
+  /** Hardware acceptance checks (about `seconds` + 10 s): returns a
+   *  plain-text report (drivers, devices, live health, input, CPU headroom). */
+  diagnostics: (seconds = 15) => invoke<string>('audio_diagnostics', { seconds }),
 }
 
 // ---- desktop output choice (remembered per machine, never in the doc) ----

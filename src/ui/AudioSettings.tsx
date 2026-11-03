@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react'
 import { getAudioPrefs, setAudioPrefs, AudioPrefs, LatencyMode } from '../audio/prefs'
 import { engine } from '../audio/engine'
 import {
-  isDesktop, nativeAudio, nativeRecord, nativeOutputPrefs, setNativeOutputPrefs,
+  isDesktop, nativeAudio, nativeRecord, nativeIo, nativeOutputPrefs, setNativeOutputPrefs,
   NativeDevice, NativeHost, NativeStats, NativeStreamInfo, NativeLatency,
 } from '../audio/native'
 // desktop-only panel: talks to the concrete native engine (stream ownership)
@@ -127,6 +127,9 @@ function NativeAudioSection() {
   const [stats, setStats] = useState<NativeStats | null>(null)
   const [err, setErr] = useState('')
   const [applied, setApplied] = useState('')
+  const [diag, setDiag] = useState<string | null>(null)
+  const [diagBusy, setDiagBusy] = useState(false)
+  const [diagMsg, setDiagMsg] = useState('')
 
   // the driver actually meant by "null" (platform default)
   const hostName = host ?? hosts.find(h => h.is_default)?.name ?? null
@@ -183,6 +186,28 @@ function NativeAudioSection() {
       await nativeEngine.restartStream()
       setApplied('Playback now uses these settings.')
     } catch (e) { setErr(String(e).slice(0, 160)) }
+  }
+
+  // Diagnostics: one click → a report the user can save and send
+  const runDiag = async () => {
+    setDiagBusy(true); setDiag(null); setDiagMsg('')
+    try {
+      const r = await nativeAudio.diagnostics(15)
+      setDiag(`Run at ${new Date().toString()}\n${r}`)
+    } catch (e) { setDiag(`Diagnostics failed: ${String(e).slice(0, 200)}`) }
+    setDiagBusy(false)
+  }
+  const saveDiag = async () => {
+    if (!diag) return
+    try {
+      const path = await nativeIo.saveDownload('synthyy-diagnostics.txt', new Blob([diag], { type: 'text/plain' }))
+      setDiagMsg(`Saved to ${path}`)
+    } catch (e) { setDiagMsg(`Could not save: ${String(e).slice(0, 120)}`) }
+  }
+  const copyDiag = async () => {
+    if (!diag) return
+    try { await navigator.clipboard.writeText(diag); setDiagMsg('Copied — paste it into the chat') }
+    catch { setDiagMsg('Copy blocked — use Save instead') }
   }
 
   const rate = stream?.sample_rate ?? nativeEngine.sampleRate
@@ -269,6 +294,25 @@ function NativeAudioSection() {
       {applied && <div className="export-hint">{applied}</div>}
       {err && <div className="export-hint" style={{ color: '#e66' }}>{err}</div>}
       <div className="export-hint">Direct hardware access via the Rust audio core. Output settings take effect when you press Apply or close this dialog; the settings above only affect the browser engine.</div>
+      <div className="export-divider" />
+      <div className="export-row">
+        <span className="export-label">Diagnostics</span>
+        <button className="export-btn" disabled={diagBusy} onClick={runDiag}
+          data-info="Checks drivers, devices, dropouts while playing, input and CPU headroom, and writes a report">
+          {diagBusy ? 'Checking… (about 25 s)' : 'Run checks'}
+        </button>
+      </div>
+      <div className="export-hint">Start a scene playing first so the live check hears real work. Then save the report and send it.</div>
+      {diag && (
+        <>
+          <textarea className="diag-report" readOnly value={diag} rows={14} onFocus={e => e.currentTarget.select()} />
+          <div className="export-actions">
+            <button className="export-btn" onClick={saveDiag}>Save to Downloads</button>
+            <button className="export-btn ghost" onClick={copyDiag}>Copy</button>
+          </div>
+          {diagMsg && <div className="export-hint">{diagMsg}</div>}
+        </>
+      )}
       <NativeInputSection host={hostName} />
     </>
   )

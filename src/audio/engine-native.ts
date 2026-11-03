@@ -330,9 +330,10 @@ class NativeEngine implements EngineApi {
         await invoke('transport_play', { mode: 'arr', fromTicks: pos })
       } else {
         await invoke('transport_stop')
-        for (const [tid, sceneId] of relaunch) {
-          await invoke('clip_launch', { trackId: tid, sceneId })
-        }
+        // one atomic batch, transport left stopped (startFrom null), so every
+        // clip anchors together; then play resumes at the old position
+        const launches = [...relaunch].map(([trackId, sceneId]) => ({ trackId, sceneId }))
+        if (launches.length) await invoke('clips_launch', { launches, startFrom: null })
         await invoke('transport_play', { mode: 'session', fromTicks: pos })
         // a stop queued for the next boundary was dropped with the old graph
         for (const tid of restop) invoke('clip_stop', { trackId: tid }).catch(() => {})
@@ -538,7 +539,18 @@ class NativeEngine implements EngineApi {
     if (ui.view === 'arr') { void this.playArrangement(); return }
     this.mode = 'session'
     this.playFlag = true
-    await invoke('transport_play', { mode: 'session', fromTicks: 0 })
+    // Resume after a session pause: relaunch every armed clip (and any launch
+    // that was still queued) as ONE batch from bar 1, like the browser
+    // engine's resumeArmed. Re-sending Play alone kept each clip's old
+    // anchor, so clips launched later (or a bar late) stayed a bar behind.
+    for (const [tid, p] of [...this.pending]) {
+      if (p.action === 'launch' && p.key) this.parts.set(tid, { key: p.key, startTicks: 0, loopTicks: p.loopTicks })
+      else if (p.action === 'stop') { this.parts.delete(tid); invoke('clip_stop', { trackId: tid }).catch(() => {}) }
+    }
+    this.pending.clear()
+    const launches = [...this.parts].map(([trackId, p]) => ({ trackId, sceneId: p.key.split('|')[1] }))
+    if (launches.length) await invoke('clips_launch', { launches, startFrom: 0 })
+    else await invoke('transport_play', { mode: 'session', fromTicks: 0 })
     for (const p of this.parts.values()) p.startTicks = 0
     this.emit()
   }
@@ -623,13 +635,34 @@ class NativeEngine implements EngineApi {
     this.emit()
   }
 
+  /** Launch a whole scene as ONE atomic batch (see Rust do_clips_launch):
+   *  from stopped every clip starts together on bar 1; while playing they
+   *  all land on the same next boundary. Firing launchClip per track raced —
+   *  the first launch started the transport and the rest were quantised to
+   *  the following bar. */
   async launchScene(sceneId: string) {
     await this.ensureStarted()
+    this.mode = 'session'
+    const wasPlaying = this.playFlag
+    const launches: { trackId: string; sceneId: string }[] = []
     for (const t of tracks.toArray()) {
       const tid = t.get('id') as string
-      if (clips.get(clipKey(tid, sceneId))) void this.launchClip(tid, sceneId)
-      else void this.stopClip(tid)
+      const key = clipKey(tid, sceneId)
+      const clipMap = clips.get(key) as Y.Map<any> | undefined
+      if (!clipMap) { void this.stopClip(tid); continue }
+      launches.push({ trackId: tid, sceneId })
+      const loopTicks = (clipMap.get('len') as number) ?? BAR
+      if (!wasPlaying) {
+        this.parts.set(tid, { key, startTicks: 0, loopTicks })
+        this.pending.delete(tid)
+      } else {
+        this.pending.set(tid, { action: 'launch', key, atTicks: this.nextBoundaryTicks(), loopTicks })
+      }
     }
+    if (!launches.length) return
+    await invoke('clips_launch', { launches, startFrom: wasPlaying ? null : 0 })
+    if (!wasPlaying) this.playFlag = true
+    this.emit()
   }
 
   stopAllClips() {

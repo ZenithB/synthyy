@@ -826,6 +826,8 @@ body.drag-audio::after {
 .track-input .track-rec.on { color: #fff; background: var(--danger); border-color: var(--danger); animation: pulse 1.2s infinite; }
 .arr-head .track-input { padding: 3px 0 0; }
 .arr-head .track-input .input-select { max-width: 96px; }
+/* desktop Diagnostics report (Audio settings) */
+.diag-report { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 8px; font: 11px/1.4 ui-monospace, Consolas, Menlo, monospace; background: var(--bg0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; resize: vertical; white-space: pre; }
 /* input-channel picker beside the device picker (desktop, multi-input interfaces) */
 .track-input .input-select.input-ch { flex: 0 0 auto; max-width: 58px; }
 

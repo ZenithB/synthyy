@@ -1,6 +1,7 @@
 # Builds the Windows installer (NSIS, per-user, no admin) on GitHub's Windows
 # machines and attaches it to the run as a downloadable artifact — no local
-# Windows toolchain needed. Runs when this file changes on a pushed branch,
+# Windows toolchain needed. Runs on every push that changes the app (so the
+# newest installer is always one download away; docs-only pushes skip it)
 # and on demand (Actions tab -> windows-installer -> Run workflow).
 # Tagged releases still go through desktop-release.yml.
 name: windows-installer
@@ -9,6 +10,16 @@ on:
   push:
     paths:
       - ".github/workflows/windows-installer.yml"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "crates/**"
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
   workflow_dispatch:
 
 permissions:

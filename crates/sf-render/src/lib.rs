@@ -178,6 +178,87 @@ pub fn prepare_engine(
     Ok((engine, total.ceil() as usize))
 }
 
+// ---- CPU headroom benchmark (docs/WINDOWS_PORT_PLAN.md W2/W6) ----
+
+/// One step of [`headroom`]: `k` copies of the project rendered back to back
+/// inside every block, timed as a share of the block's real-time deadline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HeadroomStep {
+    pub k: usize,
+    pub mean_pct: f64,
+    pub p99_pct: f64,
+    pub max_pct: f64,
+}
+
+/// Budget share considered safe for a live callback (room for the driver,
+/// the OS and other apps).
+pub const SAFE_LOAD: f64 = 0.70;
+
+/// How many copies of `project` one core can render inside a `block`-frame
+/// deadline at `rate`: K = 1, 2, 4 … up to `max_k`, `seconds` of audio per
+/// step, stopping once p99 passes 100 %. This is the audio callback's job on
+/// ONE core, so the largest K with p99 ≤ [`SAFE_LOAD`] is the headroom
+/// figure ([`headroom_fit`]). Used by examples/bench.rs and the app's
+/// Diagnostics. Allocates freely — never call on the audio thread.
+pub fn headroom(
+    project: &ProjectJSON,
+    scope: &RenderScope,
+    block: usize,
+    rate: f32,
+    seconds: f64,
+    max_k: usize,
+) -> Result<Vec<HeadroomStep>, String> {
+    let bank = sf_engine::SampleBank::new();
+    let block = block.max(1);
+    let budget_ns = block as f64 / rate as f64 * 1e9;
+    let blocks = ((seconds * rate as f64 / block as f64) as usize).max(10);
+    let mut steps = Vec::new();
+    let mut k = 1usize;
+    while k <= max_k {
+        let mut engines = Vec::with_capacity(k);
+        for _ in 0..k {
+            engines.push(prepare_engine(project, scope, rate, &bank)?.0);
+        }
+        let mut l = vec![0.0f32; block];
+        let mut r = vec![0.0f32; block];
+        let mut times = Vec::with_capacity(blocks);
+        // warm-up (caches, branch predictors, first-touch allocations)
+        for _ in 0..(blocks / 20).max(10) {
+            for e in engines.iter_mut() {
+                e.process(&mut l, &mut r);
+            }
+        }
+        for _ in 0..blocks {
+            let t0 = std::time::Instant::now();
+            for e in engines.iter_mut() {
+                e.process(&mut l, &mut r);
+            }
+            times.push(t0.elapsed().as_nanos() as f64);
+            // off the clock, like the live engine's IPC poll
+            for e in engines.iter_mut() {
+                e.service();
+            }
+        }
+        times.sort_by(|a, b| a.total_cmp(b));
+        let pct = |ns: f64| ns / budget_ns * 100.0;
+        let mean = times.iter().sum::<f64>() / times.len() as f64;
+        let p99 = times[(times.len() * 99 / 100).min(times.len() - 1)];
+        let max = times[times.len() - 1];
+        steps.push(HeadroomStep { k, mean_pct: pct(mean), p99_pct: pct(p99), max_pct: pct(max) });
+        if p99 > budget_ns {
+            break;
+        }
+        k *= 2;
+    }
+    Ok(steps)
+}
+
+/// Largest K in `steps` whose p99 stays within [`SAFE_LOAD`] (0 = not even
+/// one copy).
+pub fn headroom_fit(steps: &[HeadroomStep]) -> usize {
+    steps.iter().filter(|s| s.p99_pct <= SAFE_LOAD * 100.0).map(|s| s.k).max().unwrap_or(0)
+}
+
 /// Resample planar stereo to `to_sr` via rubato SincFixedIn (no-op when equal).
 pub fn resample_stereo(
     l: &[f32],

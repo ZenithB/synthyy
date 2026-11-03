@@ -1,6 +1,6 @@
 # Synthyy for Windows — Port Plan
 
-Status (2026-11-03): **W0–W5 implemented** — compiled and unit-tested for Windows and macOS
+Status (2026-11-03): **W0–W5 implemented; W6 tooling done, hardware pass pending** — compiled and unit-tested for Windows and macOS
 targets, awaiting the real-hardware checks in `docs/WINDOWS.md` §3. See
 section 9 for what changed and what is still open.
 
@@ -431,6 +431,36 @@ a stubbed Tauri bridge running the desktop code paths:
   Controls v6 manifest (tauri-build embeds it in the app binary only), so the
   Tauri test binary could not start; build.rs now links the manifest into
   every binary of the crate.
+
+### Done (W6 — acceptance tooling)
+
+The hardware itself can only be checked on the PC; W6 makes that one click
+and automates everything that does not need hardware:
+
+- **Cross-platform render parity in CI**: every fixture is rendered on
+  Windows, macOS and Linux (`examples/render-fixtures.rs`) and null-tested
+  (`examples/null-test.rs`, limit −90 dB; a negative control with one
+  perturbed sample fails at −66 dB). This is the "a Windows export nulls
+  against a Mac export" check, on every push.
+- **Diagnostics** in Audio settings: drivers/devices with channel counts,
+  live stream, a 15 s health window (callbacks, xruns, deadline misses,
+  thread priority), input state, latency compensation and the CPU headroom
+  test (`sf_render::headroom`, shared with examples/bench.rs), with a
+  problems summary; saved to Downloads for sending.
+- `windows-installer` workflow builds a fresh installer for every app change.
+
+### Bug fixed during W6 (user report)
+
+"Track 1 starts on time, the other tracks lag a bar." The desktop IPC layer
+started the transport right after the FIRST clip of a batch, so launches
+2..N arrived while playing and were quantised to bar 2; a session pause kept
+those stale anchors, so every later Play repeated it. The engine already
+supported atomic batches (launches while stopped anchor at the play
+position); the IPC layer now sends scene launches, resume-after-pause and
+project re-pushes as one `clips_launch` batch and starts the transport once.
+Matches the browser engine (its 50 ms start offset batches, `resumeArmed`
+re-anchors). Regression tests render the first bar of demo scene 3 and
+require Drums, Bass and Chords all to sound (Bass/Chords were silent before).
 
 ### Still open
 

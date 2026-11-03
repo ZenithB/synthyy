@@ -20,13 +20,10 @@
 use std::time::Instant;
 
 use sf_project::project::ProjectJSON;
-use sf_render::{prepare_engine, Fixture, RenderScope};
+use sf_render::{headroom, headroom_fit, prepare_engine, Fixture, RenderScope, SAFE_LOAD};
 
 /// Seconds of audio rendered per headroom step.
 const HEADROOM_SECONDS: f64 = 10.0;
-/// Budget fraction considered safe for a live callback (leaves room for the
-/// driver, the OS and other apps).
-const SAFE_LOAD: f64 = 0.70;
 
 fn load(path: &str) -> (ProjectJSON, RenderScope) {
     let json = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
@@ -89,56 +86,16 @@ fn fixtures_mode() {
 
 fn headroom_mode(path: &str, block: usize, rate: f32) {
     let (p, scope) = load(path);
-    let bank = sf_engine::SampleBank::new();
-    let budget_ns = block as f64 / rate as f64 * 1e9;
-    let blocks = (HEADROOM_SECONDS * rate as f64 / block as f64) as usize;
-    println!(
-        "project {path}: block {block} frames @ {rate} Hz = {:.2} ms deadline; {HEADROOM_SECONDS} s per step",
-        budget_ns / 1e6
-    );
+    let budget_ms = block as f64 / rate as f64 * 1e3;
+    println!("project {path}: block {block} frames @ {rate} Hz = {budget_ms:.2} ms deadline; {HEADROOM_SECONDS} s per step");
     println!("{:>4} {:>9} {:>9} {:>9}", "K", "mean %", "p99 %", "max %");
-    let mut best = 0usize;
-    let mut k = 1usize;
-    while k <= 128 {
-        let mut engines: Vec<_> = (0..k)
-            .map(|_| prepare_engine(&p, &scope, rate, &bank).unwrap_or_else(|e| panic!("{e}")).0)
-            .collect();
-        let mut l = vec![0.0f32; block];
-        let mut r = vec![0.0f32; block];
-        let mut times = Vec::with_capacity(blocks);
-        // warm-up (allocation-free paths, caches, branch predictors)
-        for _ in 0..(blocks / 20).max(10) {
-            for e in engines.iter_mut() {
-                e.process(&mut l, &mut r);
-            }
-        }
-        for _ in 0..blocks {
-            let t0 = Instant::now();
-            for e in engines.iter_mut() {
-                e.process(&mut l, &mut r);
-            }
-            times.push(t0.elapsed().as_nanos() as f64);
-            // off the clock, like the live engine's IPC poll
-            for e in engines.iter_mut() {
-                e.service();
-            }
-        }
-        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let pct = |ns: f64| ns / budget_ns * 100.0;
-        let mean = times.iter().sum::<f64>() / times.len() as f64;
-        let p99 = times[(times.len() * 99 / 100).min(times.len() - 1)];
-        let max = *times.last().unwrap();
-        println!("{k:>4} {:>9.1} {:>9.1} {:>9.1}", pct(mean), pct(p99), pct(max));
-        if p99 <= budget_ns * SAFE_LOAD {
-            best = k;
-        }
-        if p99 > budget_ns {
-            break;
-        }
-        k *= 2;
+    let steps = headroom(&p, &scope, block, rate, HEADROOM_SECONDS, 128).unwrap_or_else(|e| panic!("{e}"));
+    for s in &steps {
+        println!("{:>4} {:>9.1} {:>9.1} {:>9.1}", s.k, s.mean_pct, s.p99_pct, s.max_pct);
     }
     println!(
-        "RESULT: {best}x this project fits in {:.0}% of a {block}-frame deadline on one core (p99).",
+        "RESULT: {}x this project fits in {:.0}% of a {block}-frame deadline on one core (p99).",
+        headroom_fit(&steps),
         SAFE_LOAD * 100.0
     );
     println!("        (max includes OS scheduling noise; p99 is the figure to compare between PCs)");
