@@ -44,7 +44,7 @@ impl TestTone {
 
     /// Fill an interleaved stereo buffer. RT-safe.
     pub fn process_interleaved_stereo(&mut self, out: &mut [f32]) {
-        for frame in out.chunks_exact_mut(2) {
+        for frame in out.as_chunks_mut::<2>().0 {
             let s = libm::sinf(self.phase * core::f32::consts::TAU) * self.gain;
             self.phase += self.step;
             if self.phase >= 1.0 {
@@ -68,6 +68,6 @@ mod tests {
         assert!(buf.iter().any(|s| s.abs() > 1e-4));
         assert!(buf.iter().all(|s| s.abs() <= 0.2 + 1e-6));
         // stereo: L == R
-        assert!(buf.chunks_exact(2).all(|f| f[0] == f[1]));
+        assert!(buf.as_chunks::<2>().0.iter().all(|f| f[0] == f[1]));
     }
 }

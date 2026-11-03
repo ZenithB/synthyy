@@ -151,7 +151,9 @@ impl MeterBank {
             fx_level: self.fx_level.iter().map(load_f32).collect(),
             fx_bands_db: self
                 .fx_bands
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|c| [load_f32(&c[0]), load_f32(&c[1]), load_f32(&c[2])])
                 .collect(),
         }

@@ -328,7 +328,9 @@ mod tests {
         // sampled at SR / WIN.
         const WIN: usize = 128;
         let mut env: Vec<f32> = l
-            .chunks_exact(WIN)
+            .as_chunks::<WIN>()
+            .0
+            .iter()
             .map(|w| {
                 let e: f32 = w.windows(2).map(|p| (p[1] - p[0]) * (p[1] - p[0])).sum();
                 libm::sqrtf(e / (WIN - 1) as f32)
@@ -370,7 +372,9 @@ mod tests {
             run_blocks(&mut fx, &mut l, &mut r);
             const WIN: usize = 128;
             let mut env: Vec<f32> = l
-                .chunks_exact(WIN)
+                .as_chunks::<WIN>()
+                .0
+                .iter()
                 .map(|w| {
                     let e: f32 = w.windows(2).map(|p| (p[1] - p[0]) * (p[1] - p[0])).sum();
                     libm::sqrtf(e / (WIN - 1) as f32)

@@ -34,8 +34,10 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # version comes from rust-toolchain.toml (keep the two in step)
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.99"
           components: clippy
 
       - uses: swatinem/rust-cache@v2

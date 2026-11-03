@@ -479,10 +479,7 @@ fn decode_f32le_b64(b64: &str) -> Result<Vec<f32>, String> {
     if bytes.len() % 4 != 0 {
         return Err("PCM byte length not a multiple of 4".into());
     }
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
+    Ok(bytes.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
 }
 
 /// Webview-decoded PCM into the native sample store: base64 f32le channels at
@@ -566,7 +563,7 @@ fn raw_body<'a>(req: &'a tauri::ipc::Request<'_>) -> Result<&'a [u8], String> {
 
 /// f32 little-endian bytes → samples (byte length must be a multiple of 4).
 fn f32le(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    bytes.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect()
 }
 
 /// [`sample_put`] over raw IPC. Body: f32le PCM, the left channel then (when

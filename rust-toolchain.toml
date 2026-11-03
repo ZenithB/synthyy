@@ -1,0 +1,10 @@
+# Pin the Rust version so CI, the Mac and the Windows PC build with the same
+# compiler and lints. Without this, CI took whatever "stable" was newest and
+# a new clippy lint (chunks_exact_to_as_chunks, Rust 1.99) failed the build
+# on code that passed locally. rustup reads this file and installs the
+# version automatically the first time cargo runs in this folder.
+# To upgrade: change the version, run `cargo clippy --workspace --all-targets
+# -- -D warnings`, fix any new lints, commit.
+[toolchain]
+channel = "1.99"
+components = ["clippy", "rustfmt"]
