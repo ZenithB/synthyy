@@ -1,0 +1,19 @@
+<!-- Windows application manifest, linked into EVERY binary of this crate
+     (the app and its test executables) by build.rs. Same content as
+     tauri-build's default: Common Controls v6, which Tauri's Windows backend
+     needs. Without it a test binary fails to start with
+     STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139). -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>
