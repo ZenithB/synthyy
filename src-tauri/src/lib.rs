@@ -1165,7 +1165,12 @@ mod tests {
                     cmd: cmd.into(),
                     callback: CallbackFn(0),
                     error: CallbackFn(1),
-                    url: "tauri://localhost".parse().unwrap(),
+                    // the app's own page origin: Tauri's permission check
+                    // rejects calls from any other origin, and it differs
+                    // on Windows (WebView2 serves the app over http)
+                    url: if cfg!(windows) { "http://tauri.localhost" } else { "tauri://localhost" }
+                        .parse()
+                        .unwrap(),
                     body,
                     headers: map,
                     invoke_key: tauri::test::INVOKE_KEY.into(),

@@ -1,0 +1,70 @@
+# Builds the Windows installer (NSIS, per-user, no admin) on GitHub's Windows
+# machines and attaches it to the run as a downloadable artifact — no local
+# Windows toolchain needed. Runs when this file changes on a pushed branch,
+# and on demand (Actions tab -> windows-installer -> Run workflow).
+# Tagged releases still go through desktop-release.yml.
+name: windows-installer
+
+on:
+  push:
+    paths:
+      - ".github/workflows/windows-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  installer:
+    name: Windows installer (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # version comes from rust-toolchain.toml (keep the two in step)
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99"
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: npm ci
+
+      # ASIO build: asio-sys downloads the Steinberg SDK and needs libclang
+      # (LLVM is preinstalled on the runner image).
+      - name: Build installer with ASIO
+        id: asio
+        continue-on-error: true
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: npx tauri build --bundles nsis --features asio
+
+      # If the ASIO build fails, still produce a WASAPI-only installer.
+      - name: Build installer without ASIO (fallback)
+        if: steps.asio.outcome == 'failure'
+        run: npx tauri build --bundles nsis
+
+      - name: Name the result
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          if (-not $exe) { throw "no installer produced" }
+          $flavour = if ("${{ steps.asio.outcome }}" -eq "success") { "with-ASIO" } else { "WASAPI-only" }
+          Write-Host "Built $($exe.Name) ($flavour), $([math]::Round($exe.Length / 1MB, 1)) MB"
+          "### Synthyy installer: $($exe.Name) ($flavour)" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthyy-windows-installer
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
